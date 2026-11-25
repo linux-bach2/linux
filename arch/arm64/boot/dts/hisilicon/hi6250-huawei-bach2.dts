@@ -8,6 +8,106 @@
 #include "hi6250.dtsi"
 #include <dt-bindings/input/input.h>
 
+/*
+ * Audio codec + DSP-free PCM (proposed 0052, docs/mainline-audio-port.md). Needs 0051 (asp_power,
+ * slimbus) and 0006 (gpio26). Inert without the out-of-tree modules hi_cdc_ctrl, hi64xx_irq,
+ * hi6402_codec, hi64xx_asp_dma, hi3xxx_asp_pcm and bach2_card: no in-tree driver matches these
+ * compatibles. Copied from the stock DT (codec_controller@e82b9000, hi64xx_asp_dmac@E804B000,
+ * asp_dmac@E804B000, sound) with mainline phandles.
+ */
+/ {
+	codec_controller@e82b9000 {
+		compatible = "hisilicon,codec-controller";
+		reg = <0x0 0xe82b9000 0x0 0x800>;
+		/* stock gpios = <&gpio@fff0f000 1 0>: the codec interrupt line */
+		gpios = <&gpio26 1 0>;
+		hisilicon,bus-sel = "slimbus";
+		hisilicon,codec-sel = "hi6402";
+		hisilicon,reg-8bit-begin-addr = <0x20007000>;
+		hisilicon,reg-8bit-end-addr = <0x20007fff>;
+		clocks = <&asp_power 0>;
+		clock-names = "clk_pmuaudioclk";
+		/* stock pinctrl default and idle: gpio016 function 1 */
+		pinctrl-names = "default", "idle";
+		pinctrl-0 = <&codec_ctrl_pins>;
+		pinctrl-1 = <&codec_ctrl_pins>;
+
+		hi64xx_irq@0 {
+			compatible = "hisilicon,hi64xx-irq";
+			interrupt-controller;
+			#interrupt-cells = <2>;
+
+			hi6402_codec: hi6402_codec@0 {
+				compatible = "hisilicon,hi6402-codec";
+				/* stock <&gpio@e8a10000 7 0> = GPIO 47; the codec drives it to BT_TRI_PA at probe */
+				hisilicon,bt_tri_gpio = <&gpio5 7 0>;
+				hi6402-soundtrigger-if-4smartpa;
+				use_stereo_smartpa = <1>;
+				hisilicon,mic_num = <2>;
+				hisilicon,hs_det = <0>;
+				hisilicon,hs_ctrl = <0x19>;
+				hisilicon,coefficient = <0xaf0>;
+				hisilicon,hs_3_pole_min_voltage = <0x0>;
+				hisilicon,hs_3_pole_max_voltage = <0x8>;
+				hisilicon,hs_4_pole_min_voltage = <0x384>;
+				hisilicon,hs_4_pole_max_voltage = <0xa5a>;
+				hisilicon,btn_play_min_voltage = <0x0>;
+				hisilicon,btn_play_max_voltage = <0x64>;
+				hisilicon,btn_volume_up_min_voltage = <0x82>;
+				hisilicon,btn_volume_up_max_voltage = <0x140>;
+				hisilicon,btn_volume_down_min_voltage = <0x140>;
+				hisilicon,btn_volume_down_max_voltage = <0x2bc>;
+			};
+		};
+	};
+
+	/* vendor drivers/hisi/hi64xx/asp_dma.c: ASP DMAC channel API (AP interrupt group 0) */
+	hi64xx-asp-dma@e804b000 {
+		compatible = "hisilicon,hi64xx-asp-dma";
+		reg = <0x0 0xe804b000 0x0 0x1000>;
+		interrupts = <GIC_SPI 216 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "asp_dma_irq";
+		asp-dmac-supply = <&asp_power>;
+	};
+
+	/* vendor sound/soc/hisilicon/hi3xxx_asp_dma.c: PCM into SLIMbus port FIFOs, no HiFi DSP */
+	asp_pcm: asp-pcm@e804b000 {
+		compatible = "hisilicon,hi3xxx-pcm-asp-dma";
+		reg = <0x0 0xe804b000 0x0 0x1000>;
+		asp-dmac-supply = <&asp_power>;
+	};
+
+	sound {
+		compatible = "bach2,hi6402-card";
+		codec-handle = <&hi6402_codec>;
+		platform-handle = <&asp_pcm>;
+	};
+
+	soc {
+		/*
+		 * GPIO bank 5 (stock gpio@e8a10000, SPI 89 per the stock DT), for the codec's bt_tri_gpio.
+		 * Its pclk_gpio5 gate (CRG PEREN1 bit 5) has no mainline clock and reads on (E1:
+		 * PERCLKEN1 = PERSTAT1 = 0xffffffff); only the AO APB clock is described.
+		 */
+		gpio5: gpio@e8a10000 {
+			compatible = "arm,pl061", "arm,primecell";
+			reg = <0x0 0xe8a10000 0x0 0x1000>;
+			interrupts = <GIC_SPI 89 IRQ_TYPE_LEVEL_HIGH>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			clocks = <&ao_ctrl HI6250_APB_PCLK>;
+			clock-names = "apb_pclk";
+		};
+	};
+};
+
+&pmx0 {
+	/* stock gpio016_pmx_func (pmx0 0x034): function 1, applied to codec_controller */
+	codec_ctrl_pins: codec-ctrl-pins {
+		pinctrl-single,pins = <0x34 1>;
+	};
+};
+
 / {
 	model = "Huawei MediaPad M5 lite 10 (bach2)";
 	compatible = "huawei,bach2", "hisilicon,hi6250";
