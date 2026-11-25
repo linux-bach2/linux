@@ -186,7 +186,13 @@
 			vmmc-supply = <&wifi_vmmc>;
 			vqmmc-supply = <&wifi_vqmmc>;
 			bus-width = <4>;
-			max-frequency = <25000000>;
+			/*
+			 * Stage A: SD high-speed (CCCR SHS) at 3.3 V signalling. ciu
+			 * 400 MHz wanted, ppll0 1440 / 4 = 360 MHz, card clock 45 MHz;
+			 * SD_HS phases {6, 0, 15, 15} (vendor SDIO SD_HS entry).
+			 */
+			max-frequency = <50000000>;
+			cap-sd-highspeed;
 			fifo-depth = <0x100>;
 			non-removable;
 			no-mmc;
