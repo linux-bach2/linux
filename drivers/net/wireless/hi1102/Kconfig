@@ -1,0 +1,8 @@
+config HI1102_SDIO
+	tristate "HiSilicon Hi1102 SDIO bootstrap (experimental)"
+	depends on MMC
+	select FW_LOADER
+	help
+	  Initial Hi1102 transport bring-up. Enables function 1, checks the
+	  boot ROM VERSION reply and uploads the stock Wi-Fi firmware.
+	  A wireless network interface is not implemented yet.
