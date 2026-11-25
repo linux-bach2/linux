@@ -49,12 +49,22 @@
 
 #define ENABLE_SHIFT_MIN_SMPL (4)
 #define ENABLE_SHIFT_MAX_SMPL (12)
-#define USE_DLY_MIN_SMPL (11)
-#define USE_DLY_MAX_SMPL (14)
+
+/*
+ * The use_sample_dly window sits at the top of the 2 * (div + 1) sample
+ * phases: 11..14 for div 7, 13..16 for div 8, 15..18 for div 9 (vendor 4.9
+ * dw_mmc_hi3xxx.c dw_mci_shift_sdio_set(); the div 9 window is confirmed by
+ * the stock 160 MHz tuning log, GPIO=0x12900 for samples 15..18 only).
+ */
+#define USE_DLY_MIN_SMPL(div) (2 * ((div) + 1) - 5)
+#define USE_DLY_MAX_SMPL(div) (2 * ((div) + 1) - 2)
 
 struct k3_priv {
 	int ctrl_id;
 	u32 cur_speed;
+	/* hi6250: last applied request, so set_ios keeps a tuned phase */
+	u32 cur_clock;
+	u32 cur_timing;
 	struct regmap	*reg;
 };
 
@@ -69,7 +79,13 @@ struct hs_timing {
 	u32 smpl_dly;
 	u32 smpl_phase_max;
 	u32 smpl_phase_min;
+	u32 clk_div;	/* ciu divider in GPIO[11:8]; 0 means GENCLK_DIV */
 };
+
+static u32 hs_timing_clk_div(const struct hs_timing *t)
+{
+	return t->clk_div ? t->clk_div : GENCLK_DIV;
+}
 
 static struct hs_timing hs_timing_cfg[TIMING_MODE][TIMING_CFG_NUM] = {
 	{ /* reserved */ },
@@ -120,7 +136,15 @@ static struct hs_timing hs_timing_cfg_hi6250[TIMING_MODE][TIMING_CFG_NUM] = {
 		{6, 0, 15, 15, },	/* 3: SDR12 */
 		{6, 0,  0,  0, },	/* 4: SDR25 */
 		{5, 0, 12,  0, },	/* 5: SDR50 */
-		{5, 4, 15,  0, },	/* 6: SDR104 */
+		/*
+		 * 6: SDR104. Stock (DT wifi_sdio_sdr104_156M): ciu 1600 MHz
+		 * (ppll3) / (9 + 1) = 160 MHz, samples 0..19. ppll3 needs an
+		 * LPM3 IPC here, so use ppll0: 1440 MHz / (8 + 1) = 160 MHz,
+		 * samples 0..2 * (8 + 1) - 1 = 17 (the vendor's div 8 entry,
+		 * wifi_sdio_sdr104_177M, uses the same range). drv_phase and
+		 * smpl_dly are the vendor values, unchanged across dividers.
+		 */
+		{5, 4, 17,  0, 8, },
 		{0},					    /* 7: DDR50 */
 		{0},					    /* 8: DDR52 */
 		{0},					    /* 9: HS200 */
@@ -249,6 +273,7 @@ static void dw_mci_hs_set_timing(struct dw_mci *host, int timing,
 	u32 use_smpl_dly = 0;
 	u32 enable_shift = 0;
 	u32 reg_value;
+	u32 clk_div;
 	int ctrl_id;
 	struct k3_priv *priv;
 
@@ -257,14 +282,15 @@ static void dw_mci_hs_set_timing(struct dw_mci *host, int timing,
 
 	drv_phase = timings[ctrl_id][timing].drv_phase;
 	smpl_dly   = timings[ctrl_id][timing].smpl_dly;
+	clk_div = hs_timing_clk_div(&timings[ctrl_id][timing]);
 	if (smpl_phase == -1)
 		smpl_phase = (timings[ctrl_id][timing].smpl_phase_max +
 			     timings[ctrl_id][timing].smpl_phase_min) / 2;
 
 	switch (timing) {
 	case MMC_TIMING_UHS_SDR104:
-		if (smpl_phase >= USE_DLY_MIN_SMPL &&
-				smpl_phase <= USE_DLY_MAX_SMPL)
+		if (smpl_phase >= USE_DLY_MIN_SMPL(clk_div) &&
+				smpl_phase <= USE_DLY_MAX_SMPL(clk_div))
 			use_smpl_dly = 1;
 		fallthrough;
 	case MMC_TIMING_UHS_SDR50:
@@ -284,7 +310,7 @@ static void dw_mci_hs_set_timing(struct dw_mci *host, int timing,
 
 	mci_writel(host, ENABLE_SHIFT, enable_shift);
 
-	reg_value = FIELD_PREP(GPIO_CLK_DIV_MASK, GENCLK_DIV) |
+	reg_value = FIELD_PREP(GPIO_CLK_DIV_MASK, clk_div) |
 			     FIELD_PREP(GPIO_USE_SAMPLE_DLY_MASK, use_smpl_dly);
 	mci_writel(host, GPIO, (unsigned int)reg_value | GPIO_CLK_ENABLE);
 
@@ -467,12 +493,24 @@ static void dw_mci_hi6250_set_ios(struct dw_mci *host, struct mmc_ios *ios)
 	int ret;
 	unsigned long wanted;
 	unsigned long actual;
+	u32 clk_div;
 	struct k3_priv *priv = host->priv;
 
-	if (!ios->clock || ios->clock == priv->cur_speed)
+	/*
+	 * Compare against the request, not the rounded bus_hz, so an unchanged
+	 * clock + timing leaves the registers (and a tuned phase) alone.
+	 */
+	if (!ios->clock || (ios->clock == priv->cur_clock &&
+			    ios->timing == priv->cur_timing))
 		return;
 
-	wanted = ios->clock * (GENCLK_DIV + 1);
+	if (ios->timing >= TIMING_CFG_NUM) {
+		dev_err(host->dev, "unsupported timing %u\n", ios->timing);
+		return;
+	}
+
+	clk_div = hs_timing_clk_div(&hs_timing_cfg_hi6250[priv->ctrl_id][ios->timing]);
+	wanted = ios->clock * (clk_div + 1);
 	ret = clk_set_rate(host->ciu_clk, wanted);
 	if (ret) {
 		dev_err(host->dev, "failed to set rate %luHz\n", wanted);
@@ -481,43 +519,80 @@ static void dw_mci_hi6250_set_ios(struct dw_mci *host, struct mmc_ios *ios)
 	actual = clk_get_rate(host->ciu_clk);
 
 	dw_mci_hs_set_timing(host, ios->timing, -1, hs_timing_cfg_hi6250);
-	host->bus_hz = actual / (GENCLK_DIV + 1);
+	host->bus_hz = actual / (clk_div + 1);
 	host->current_speed = 0;
 	priv->cur_speed = host->bus_hz;
+	priv->cur_clock = ios->clock;
+	priv->cur_timing = ios->timing;
 }
 
+/*
+ * Vendor 4.9 dw_mci_hs_tuning_find_condition(): odd window lengths from the
+ * whole range down to 1; for each length, start positions from the centre
+ * outwards, stopping at the first one out of range; return the centre of
+ * the first fully passing window. Stock 160 MHz: flags 0xfbfff over 0..19
+ * gives sample 7, as logged ("tuning sample = 7").
+ */
+static int dw_mci_hi6250_best_clksmpl(u32 flags, int min, int max)
+{
+	int len, start, i, j;
+	u32 mask;
+
+	for (len = (((max - min) >> 1) << 1) + 1; len >= 1; len -= 2) {
+		mask = GENMASK(len - 1, 0);
+		start = (min + max - len + 1) / 2;
+		for (i = start, j = 1; i >= min && i <= max - len + 1;
+		     i = start + ((j % 2) ? -1 : 1) * (j / 2)) {
+			if ((flags & (mask << i)) == (mask << i))
+				return i + len / 2;
+			j++;
+		}
+	}
+
+	return -EIO;
+}
 
 static int dw_mci_hi6250_execute_tuning(struct dw_mci_slot *slot, u32 opcode)
 {
-	int i = 0;
 	struct dw_mci *host = slot->host;
 	struct mmc_host *mmc = slot->mmc;
-	int smpl_phase = 0;
+	struct k3_priv *priv = host->priv;
+	const struct hs_timing *t;
 	u32 tuning_sample_flag = 0;
-	int best_clksmpl = 0;
+	int smpl_phase;
+	int best_clksmpl;
 
-	for (i = 0; i < NUM_PHASES; ++i, ++smpl_phase) {
-		smpl_phase %= 32;
+	if (mmc->ios.timing >= TIMING_CFG_NUM)
+		return -EINVAL;
+	t = &hs_timing_cfg_hi6250[priv->ctrl_id][mmc->ios.timing];
 
+	for (smpl_phase = t->smpl_phase_min;
+	     smpl_phase <= t->smpl_phase_max; smpl_phase++) {
 		mci_writel(host, TMOUT, ~0);
-		dw_mci_hs_set_timing(host, mmc->ios.timing, smpl_phase, hs_timing_cfg_hi6250);
+		dw_mci_hs_set_timing(host, mmc->ios.timing, smpl_phase,
+				     hs_timing_cfg_hi6250);
 
 		if (!mmc_send_tuning(mmc, opcode, NULL))
-			tuning_sample_flag |= (1 << smpl_phase);
-		else
-			tuning_sample_flag &= ~(1 << smpl_phase);
+			tuning_sample_flag |= BIT(smpl_phase);
 	}
 
-	best_clksmpl = dw_mci_get_best_clksmpl(tuning_sample_flag);
+	best_clksmpl = dw_mci_hi6250_best_clksmpl(tuning_sample_flag,
+						  t->smpl_phase_min,
+						  t->smpl_phase_max);
 	if (best_clksmpl < 0) {
-		dev_err(host->dev, "All phases bad!\n");
+		dev_err(host->dev,
+			"All phases bad! timing %u samples %u..%u tuning_sample_flag %x\n",
+			mmc->ios.timing, t->smpl_phase_min, t->smpl_phase_max,
+			tuning_sample_flag);
 		return -EIO;
 	}
 
 	dw_mci_hs_set_timing(host, mmc->ios.timing, best_clksmpl, hs_timing_cfg_hi6250);
 
-	dev_info(host->dev, "tuning ok best_clksmpl %u tuning_sample_flag %x\n",
-		 best_clksmpl, tuning_sample_flag);
+	dev_info(host->dev,
+		 "tuning ok: timing %u div %u samples %u..%u best_clksmpl %d tuning_sample_flag %x\n",
+		 mmc->ios.timing, hs_timing_clk_div(t), t->smpl_phase_min,
+		 t->smpl_phase_max, best_clksmpl, tuning_sample_flag);
 	return 0;
 }
 
@@ -536,6 +611,12 @@ static int dw_mci_hi6250_switch_voltage(struct mmc_host *mmc,
 	if (!priv || !priv->reg)
 		return 0;
 
+	/*
+	 * SDIO pads: CMD11 only, nothing to switch. Stock does the same: the
+	 * vendor dw_mci_priv_voltage_switch() returns early for every host but
+	 * the SD slot, mmc2 has no vqmmc supply ("using dummy regulator"), and
+	 * the stock boot log has no dw_mci_set_sel18 line around mmc2's CMD11.
+	 */
 	if (priv->ctrl_id == DWMMC_SDIO_ID)
 		return 0;
 
