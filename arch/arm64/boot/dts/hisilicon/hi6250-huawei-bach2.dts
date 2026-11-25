@@ -84,6 +84,47 @@
 		leds = <&lcd_bl_led>;
 	};
 
+	/*
+	 * Touch I2C (i2c@ffd73000) functional clock. Stock clk_i2c2 = fixed-factor 1:1 of the fixed
+	 * clk_fll_src (128 MHz), no gate in the AP clock tree. The vendor DT asks for 19.2 MHz
+	 * (clock-rate), which a fixed-factor-of-fixed clock cannot provide, so the vendor timing is
+	 * computed for 128 MHz too [I]. If the real rate is lower, SCL only gets slower.
+	 */
+	i2c2_ref: i2c2-ref-clock {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <128000000>;
+		clock-output-names = "i2c2_ref_assumed";
+	};
+
+	/*
+	 * Touch rails (Hi6555v100 PMIC, stock vendor DT ldo@19 / ldo@25). Off after the bootloader
+	 * (TOUCH stage A, 2026-11-24: ctrl 0x19 / 0x25 and vset 0x42 / 0x4e all 0). On stock only
+	 * elan_ts switches them. The driver (0045) refuses any selector but the stock one, so a
+	 * constraint edit here cannot raise them; min == max makes the core program the stock
+	 * selector once at registration, while the LDO is still off.
+	 */
+	pmic-ldo {
+		compatible = "hisilicon,hi6555v100-ldo";
+		hisilicon,pmic-syscon = <&pmu_ctrl>;
+
+		regulators {
+			/* touch VDDIO, stock vddio_ldo_value 1.8 V */
+			ldo4: ldo4 {
+				regulator-name = "ldo4";
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+			};
+
+			/* touch VCI, stock vci_ldo_value 3.3 V */
+			ldo17: ldo17 {
+				regulator-name = "ldo17";
+				regulator-min-microvolt = <3300000>;
+				regulator-max-microvolt = <3300000>;
+			};
+		};
+	};
+
 	chosen {
 		bootargs = "console=tty0 loglevel=8 ignore_loglevel printk.time=1";
 
@@ -228,6 +269,77 @@
 		};
 
 		/*
+		 * Touch reset: GPIO 145 = gpio18 line 1 (stock ts_kit reset_gpio). The block gate is
+		 * named apb_pclk (as in hi3660.dtsi) so the AMBA bus enables it (0043).
+		 */
+		gpio18: gpio@e8a1d000 {
+			compatible = "arm,pl061", "arm,primecell";
+			reg = <0 0xe8a1d000 0 0x1000>;
+			interrupts = <GIC_SPI 102 IRQ_TYPE_LEVEL_HIGH>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+			clocks = <&crg_ctrl HI6250_PCLK_GPIO18>;
+			clock-names = "apb_pclk";
+		};
+
+		/* Touch IRQ: gpio28 line 0 (stock ts_kit irq_gpio). */
+		gpio28: gpio@fff1d000 {
+			compatible = "arm,pl061", "arm,primecell";
+			reg = <0 0xfff1d000 0 0x1000>;
+			interrupts = <GIC_SPI 162 IRQ_TYPE_LEVEL_HIGH>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+			clocks = <&sys_ctrl HI6250_PCLK_AO_GPIO6>;
+			clock-names = "apb_pclk";
+		};
+
+		/*
+		 * Stock i2c@FFD73000 (alias i2c2; i2c-0 on the vendor kernel [I]): hisi DesignWare in the
+		 * IOMCU domain, SPI 120, 400 kHz on stock (no speed-mode). The vendor driver writes no
+		 * clock gate; it pulses the IOMCU reset (0xffd7e000 + 0x20/0x24, status 0x28, bit 5) at
+		 * probe. Neither is modelled here: the bootloader state is used [I: the stock kernel
+		 * reads this block at 26.4 s, before the IOMCU reports ready at 27.7 s]. 100 kHz.
+		 */
+		i2c2: i2c@ffd73000 {
+			compatible = "snps,designware-i2c";
+			reg = <0x0 0xffd73000 0x0 0x1000>;
+			interrupts = <GIC_SPI 120 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&i2c2_ref>;
+			clock-frequency = <100000>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&i2c2_pins>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			/*
+			 * Stock: ts_kit + elan_ts (drivers/devkit/tpkit/panel/elan, CONFIG_ELAN_TS_KIT=y; not the
+			 * unbuilt tpkit/3_0 copy), ekth5512c at 0x10. Its commands are HID-over-I2C output reports
+			 * (wOutputRegister 0x0004, report ID 3); the HID descriptor address 0x0001 is the
+			 * upstream Elan value [I]; the TOUCH diag checks it.
+			 * Power and reset, stock elan_ktf_chip_detect(): VCI = ldo17 set to 3.3 V and enabled,
+			 * then VDDIO = ldo4 set to 1.8 V and enabled, msleep(1), reset high 5 ms, low 10 ms,
+			 * high, msleep(300). i2c-hid-of-elan with the ekth6a12nay timing: reset held low,
+			 * vcc33 then vccio enabled in that order, 10 ms, reset released, 300 ms. Same order,
+			 * same voltages (locked in the hi6555v100-ldo driver), same >= 10 ms low pulse after power.
+			 * IRQ: ts_kit irq_config 0 = TS_IRQ_LOW_LEVEL.
+			 */
+			touchscreen@10 {
+				compatible = "elan,ekth5512c", "elan,ekth6a12nay";
+				reg = <0x10>;
+				interrupts-extended = <&gpio28 0 IRQ_TYPE_LEVEL_LOW>;
+				reset-gpios = <&gpio18 1 GPIO_ACTIVE_LOW>;
+				vcc33-supply = <&ldo17>;
+				vccio-supply = <&ldo4>;
+				pinctrl-names = "default";
+				pinctrl-0 = <&touch_reset_pin>;
+			};
+		};
+
+		/*
 		 * Stock i2c@FDF0D000 (alias i2c4; i2c-2 on the vendor kernel): DesignWare, SPI 82, clock
 		 * clk_i2c4 (CRG 0x20 bit 27), reset CRG 0x78/0x7c bit 27. 100 kHz against an assumed
 		 * 120 MHz ref (clk-hi6250.c): SCL is never faster than requested unless the real ref
@@ -303,6 +415,21 @@
 	/* Stock gpio201/gpio202_pmx_func: function 0 = GPIO */
 	vol_key_pins: vol-key-pins {
 		pinctrl-single,pins = <0x58 0 0x5c 0>;
+	};
+};
+
+/* Touch */
+&pmx0 {
+	/* Stock gpio055_pmx_func (gpio18 gpio-ranges: line 1 = pin 52): function 0 = GPIO */
+	touch_reset_pin: touch-reset-pin {
+		pinctrl-single,pins = <0xd0 0>;
+	};
+};
+
+&pmx1 {
+	/* Stock gpio187/gpio188_pmx_func of i2c@FFD73000: function 1 = I2C2 SCL/SDA */
+	i2c2_pins: i2c2-pins {
+		pinctrl-single,pins = <0x24 1 0x28 1>;
 	};
 };
 
