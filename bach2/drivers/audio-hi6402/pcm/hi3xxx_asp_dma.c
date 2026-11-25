@@ -508,7 +508,7 @@ static int hi3xxx_intr_dmac_check_period_irq(struct hi3xxx_asp_dmac_runtime_data
 		periodIntervalMs = (currPeriodTimeNs - prtd->prePeriodTimeNs)/1000000;
 		prtd->prePeriodTimeNs = currPeriodTimeNs;
 		if (periodIntervalMs < intervalNormalMs / 2) {
-			pr_err("[%s:%d] dma period irq error interval %d ms\n", __FUNCTION__, __LINE__,  periodIntervalMs);
+			pr_err_ratelimited("[%s:%d] dma period irq error interval %d ms\n", __FUNCTION__, __LINE__,  periodIntervalMs);	/* bach2: was ~300/s with two ports, it wrapped pstore (A6) */
 		}
 
 		if (periodIntervalMs > intervalNormalMs * 2) {
@@ -521,7 +521,7 @@ static int hi3xxx_intr_dmac_check_period_irq(struct hi3xxx_asp_dmac_runtime_data
 			queue_delayed_work(dma_exception_workqueue, &dma_exception_work, msecs_to_jiffies(100));
 #endif
 
-			pr_err("[%s:%d] dma period irq error interval %d ms\n", __FUNCTION__, __LINE__,  periodIntervalMs);
+			pr_err_ratelimited("[%s:%d] dma period irq error interval %d ms\n", __FUNCTION__, __LINE__,  periodIntervalMs);	/* bach2: was ~300/s with two ports, it wrapped pstore (A6) */
 			ret = -EFAULT;
 		}
 	}

@@ -344,6 +344,14 @@ static int tfa98xx_bach2_probe(struct i2c_client *i2c)
 				vstep = vmax > 0 ? vmax - 1 : 0;
 				pr_info(LOGP "0x%02x A5 start: profile %d '%s' vsteps %d using vstep %d\n", i2c->addr, prof,
 					tfaContProfileName(cnt, tfa->dev_idx, prof), vmax, vstep);
+				/*
+				 * Always a cold start: after a stop the amp keeps its SW profile, and tfa_dev_start then takes
+				 * the warm path, which leaves AMPE = 0 (cycles 19/20: every start after the first was silent).
+				 * Forget the profile and re-init (I2CR, DSP reset) first.
+				 */
+				tfa_dev_set_swprof(tfa, 0xff);
+				tfa_dev_set_swvstep(tfa, 0xff);
+				pr_info(LOGP "0x%02x A5 cold init: %d\n", i2c->addr, tfa98xx_init(tfa));
 				ret = tfa_dev_start(tfa, prof, vstep);
 				report(t, ret ? "A5 START-FAILED" : "A5 started");
 				pr_info(LOGP "0x%02x A5 result %d\n", i2c->addr, ret);

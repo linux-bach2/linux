@@ -28,6 +28,15 @@ static struct snd_soc_dai_driver bach2_slimbus_dai = {
 		.rates = SNDRV_PCM_RATE_8000_384000,
 		.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE,
 	},
+	/* A7: the mic uplink (stock media-main-mic: ADC0 -> S1 OL/OR -> SLIMbus capture track, activated
+	 * by the codec's "AUDIO CAPTURE SWITCH" DAPM event); the ASP DMA reads dports 2/3 (ch 7/8). */
+	.capture = {
+		.stream_name = "SLIMbus Capture",
+		.channels_min = 1,
+		.channels_max = 2,
+		.rates = SNDRV_PCM_RATE_8000_384000,
+		.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE,
+	},
 	.ops = &bach2_slimbus_dai_ops,
 };
 
@@ -44,7 +53,6 @@ static struct snd_soc_dai_link bach2_links[] = {
 	{
 		.name = "bach2-hi6402-pb",
 		.stream_name = "bach2-hi6402-pb",
-		.playback_only = 1,
 		SND_SOC_DAILINK_REG(bach2_pb),
 	},
 };
