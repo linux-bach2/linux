@@ -91,8 +91,9 @@ jobs:
           rm -rf $B/out $B/hostloop; mkdir -p $B/out/modules $B/hostloop
           make -s INSTALL_MOD_PATH=$B/out/modules INSTALL_MOD_STRIP=1 modules_install
           rm -f $B/out/modules/lib/modules/$KREL/build
-          cp arch/arm64/boot/Image.gz arch/arm64/boot/dts/$DTB $B/out/
-          cat arch/arm64/boot/Image.gz arch/arm64/boot/dts/$DTB > $B/out/Image.gz-dtb
+          gzip -9nc arch/arm64/boot/Image > $B/out/Image.gz   # not a make target: keep the tree as pass 1 left it
+          cp arch/arm64/boot/dts/$DTB $B/out/
+          cat $B/out/Image.gz arch/arm64/boot/dts/$DTB > $B/out/Image.gz-dtb
           cp .config $B/out/config; cp System.map $B/toolchain.txt $B/out/
           tar -C $B/out/modules -czf $B/out/modules-$KREL.tar.gz lib; rm -rf $B/out/modules
           # Host-loop artifact: build products only (everything git does not track); the tablet has the sources.
