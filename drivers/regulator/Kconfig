@@ -478,6 +478,16 @@ config REGULATOR_HI655X
 	  This driver provides support for the voltage regulators of the
 	  Hisilicon Hi655x PMIC device.
 
+config REGULATOR_HI6555V100_LDO
+	tristate "HiSilicon Hi6555v100 (Hi6250 PMIC) LDOs locked to stock voltages"
+	depends on ARCH_HISI || COMPILE_TEST
+	depends on OF
+	select MFD_SYSCON
+	help
+	  Minimal driver for a few LDOs of the Hi6555v100 PMIC behind the Hi6250
+	  PMU window (Huawei MediaPad M5 lite 10: ldo4 and ldo17, the touchscreen
+	  rails). Each LDO only ever runs at its stock voltage.
+
 config REGULATOR_HI6421V600
 	tristate "HiSilicon Hi6421v600 PMIC voltage regulator support"
 	depends on MFD_HI6421_SPMI && OF
