@@ -287,7 +287,8 @@
 // #define HI6250_CLK_UART0 110
 // #define HI6250_CLK_UART2 111
 // #define HI6250_CLK_UART5 112
-// #define HI6250_CLK_I2C3 113
+/* Speaker-amp bus (i2c@fdf0c000), audio clock-ID block 48..63: needs HI6250_CRGCTRL_NR_CLKS >= 49 */
+#define HI6250_CLK_I2C3 48
 // #define HI6250_CLK_I2C4 114
 // #define HI6250_CLK_SPI1 115
 // #define HI6250_CLK_TIMER9_A 116

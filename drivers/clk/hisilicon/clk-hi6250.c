@@ -328,6 +328,8 @@ static const struct hisi_gate_clock hi6250_crgctrl_gate_clks[] = {
   // { HI6250_AUTODIV_EMMC1BUS, "autodiv_emmc1bus", "autodiv_sourcebus", CLK_GATE_HIWORD_MASK, 0x404, 0, 0, },
 };
 
+/* Fails the build until the coordinator raises HI6250_CRGCTRL_NR_CLKS to >= 49. */
+static_assert(HI6250_CLK_I2C3 < HI6250_CRGCTRL_NR_CLKS);
 
 static const struct hisi_gate_clock hi6250_crgctrl_gate_sep_clks[] = {
   { HI6250_HCLK_USB2OTG, "hclk_usb2otg", "clk_dbgbus_div", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x40, 1, 0, },
@@ -394,7 +396,8 @@ static const struct hisi_gate_clock hi6250_crgctrl_gate_sep_clks[] = {
 //   { HI6250_CLK_UART0, "clk_uart0", "clkmux_uartl", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x20, 10, 0, },
 //   { HI6250_CLK_UART2, "clk_uart2", "clkmux_uartl", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x20, 12, 0, },
 //   { HI6250_CLK_UART5, "clk_uart5", "clkmux_uartl", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x20, 15, 0, },
-//   { HI6250_CLK_I2C3, "clk_i2c3", "clkmux_i2c", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x20, 7, 0, },
+/* Stock clk_i2c3: hi3xxx-clkgate <0x20 0x80>. Same assumed parent as clk_i2c4. */
+{ HI6250_CLK_I2C3, "clk_i2c3", "clk_i2c_ref_assumed", CLK_IGNORE_UNUSED, 0x20, 7, 0, },
 /* Parent is the assumed fixed rate below, not the real clkmux_i2c/clkdiv_i2c chain. */
 { HI6250_CLK_I2C4, "clk_i2c4", "clk_i2c_ref_assumed", CLK_IGNORE_UNUSED, 0x20, 27, 0, },
 //   { HI6250_CLK_SPI1, "clk_spi1", "clkmux_spi", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x20, 9, 0, },
