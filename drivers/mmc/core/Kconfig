@@ -91,3 +91,10 @@ config MMC_CRYPTO
 	  Enabling this makes it possible for the kernel to use the crypto
 	  capabilities of the MMC device (if present) to perform crypto
 	  operations on data being transferred to/from the device.
+
+config PWRSEQ_HI1102
+	tristate "HiSilicon Hi1102 power sequence"
+	depends on OF && GPIOLIB && PINCTRL
+	help
+	  Power sequence for Hi1102 on Huawei Bach2. Holds UART RX high
+	  during chip reset, then restores the UART pin multiplexing.
