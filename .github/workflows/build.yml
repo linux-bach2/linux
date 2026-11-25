@@ -102,7 +102,9 @@ jobs:
           tar -C $B/out/modules -czf $B/out/modules-$KREL.tar.gz lib; rm -rf $B/out/modules
           # Host-loop artifact: build products only (everything git does not track); the tablet has the sources.
           git ls-files -z --others > /tmp/products
-          tar --null -T /tmp/products -cf - | zstd -q -T0 -9 > $B/hostloop/hostloop-tree.tar.zst
+          # pax format keeps nanosecond mtimes: with whole seconds, a generator and its output written in
+          # the same second look out of date to make on the tablet (15 objects rebuilt there).
+          tar --format=posix --pax-option=delete=atime,delete=ctime --null -T /tmp/products -cf - | zstd -q -T0 -9 > $B/hostloop/hostloop-tree.tar.zst
           cp $B/toolchain.txt $B/hostloop/
           (cd $B/out && sha256sum * > SHA256SUMS); (cd $B/hostloop && sha256sum * > SHA256SUMS)
           chmod -R a+rX $B/out $B/hostloop
