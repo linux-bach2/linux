@@ -17,7 +17,7 @@ The device runs a stock Huawei 4.4 kernel + Alpine userspace; mainline is booted
   container, in-tree, at `/root/linux-extra/build/linux-hi6250`**: the same path and toolchain (gcc 14.2.0-r4,
   binutils 2.43.1-r3) as the tablet. That parity is what lets the tablet reuse CI objects; don't change the path,
   image or package list casually (the tablet checks every `pkg=` line of `toolchain.txt`).
-- Artifacts: `bach2-kernel-<sha>` (Image.gz, DTB, modules, config) and `hostloop-tree-<sha>` (pax tar of the build
+- Artifacts: `bach2-kernel-<sha>` (Image.gz, DTB, in-tree + bach2 modules, config) and `hostloop-tree-<sha>` (pax tar of the build
   products; nanosecond mtimes matter, since GNU tar's default format makes make rebuild generated files).
 - Local checks only: `make ARCH=arm64 bach2_defconfig && make ARCH=arm64 drivers/foo/bar.o` (one object) or
   `make hisilicon/hi6250-huawei-bach2.dtb`. Never run a full local kernel build.
@@ -28,14 +28,16 @@ The bring-up ("host") repo `/root/pmos-tablet` holds the same kernel changes as 
 `mainline/patches/*.patch` (always), `patches/emmc/*`, `patches/proposed/*` (only if listed in `proposed/READY`),
 DTS patches against `mainline/hi6250-huawei-bach2.dts`, plus `patch-reboot.py` / `patch-crumbs.py`.
 `build-on-tablet.sh` (`ci_verify`) applies that set to `6359ae585` in a scratch worktree and **refuses the CI tree
-unless this branch equals it**, apart from `.github/`, `arch/arm64/configs/bach2_defconfig` and `CLAUDE.md`.
+unless this branch equals it**, apart from `.github/`, `arch/arm64/configs/bach2_defconfig`, `CLAUDE.md` and `bach2/`.
 So every kernel change goes into **both** places:
 1. commit it here (one commit per patch, message ends with `Origin: bach2 bring-up <patch>`);
 2. add/update the patch in the host repo (new DTS/driver work → `proposed/NNNN-*.patch` + a line in `READY`);
 3. check: extract `patch_tree`/`ci_verify` from `build-on-tablet.sh` and run `ci_verify $(git rev-parse HEAD)`
    from `/root/linux-extra/build/linux-hi6250` (that tree is a git worktree of this repo).
-Out-of-tree drivers (hisi110x Wi-Fi, HI6402 audio, TFA98xx amps) live only in the host repo
-(`mainline/drivers/`) and are built on the tablet against the CI tree.
+Out-of-tree drivers (hisi110x Wi-Fi, HI6402 audio, TFA98xx amps) live in `bach2/` here (sources + the host repo's
+build scripts) **and** in the host repo's `mainline/drivers/`. CI builds them after the kernel (artifacts:
+`bach2-modules-<release>.tar.gz`, plus `modules-ext.tar.zst` + `bach2-src.sha256` for the tablet). The tablet uses the
+prebuilt `.ko` only if `bach2-src.sha256` equals its own copy, so change driver code in **both** places.
 
 ## Where things are
 - Board DT: `arch/arm64/boot/dts/hisilicon/hi6250-huawei-bach2.dts` (+ `-emmc.dtsi`, always included); SoC: `hi6250.dtsi`.
