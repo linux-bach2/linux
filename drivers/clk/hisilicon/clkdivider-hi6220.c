@@ -27,6 +27,7 @@
  * @width:	width of the divider bit field
  * @mask:	mask for setting divider rate
  * @table:	the div table that the divider supports
+ * @div_flags:	CLK_DIVIDER_* rounding flags
  * @lock:	register lock
  */
 struct hi6220_clk_divider {
@@ -36,6 +37,7 @@ struct hi6220_clk_divider {
 	u8		width;
 	u32		mask;
 	const struct clk_div_table *table;
+	unsigned long	div_flags;
 	spinlock_t	*lock;
 };
 
@@ -52,7 +54,7 @@ static unsigned long hi6220_clkdiv_recalc_rate(struct clk_hw *hw,
 	val &= div_mask(dclk->width);
 
 	return divider_recalc_rate(hw, parent_rate, val, dclk->table,
-				   CLK_DIVIDER_ROUND_CLOSEST, dclk->width);
+				   dclk->div_flags, dclk->width);
 }
 
 static int hi6220_clkdiv_determine_rate(struct clk_hw *hw,
@@ -62,7 +64,7 @@ static int hi6220_clkdiv_determine_rate(struct clk_hw *hw,
 
 	return divider_determine_rate(
         hw, req, dclk->table, dclk->width,
-        CLK_DIVIDER_ROUND_CLOSEST);
+        dclk->div_flags);
 }
 
 static int hi6220_clkdiv_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -74,7 +76,7 @@ static int hi6220_clkdiv_set_rate(struct clk_hw *hw, unsigned long rate,
 	struct hi6220_clk_divider *dclk = to_hi6220_clk_divider(hw);
 
 	value = divider_get_val(rate, parent_rate, dclk->table,
-				dclk->width, CLK_DIVIDER_ROUND_CLOSEST);
+				dclk->width, dclk->div_flags);
 
 	if (dclk->lock)
 		spin_lock_irqsave(dclk->lock, flags);
@@ -98,9 +100,10 @@ static const struct clk_ops hi6220_clkdiv_ops = {
 	.set_rate = hi6220_clkdiv_set_rate,
 };
 
-struct clk *hi6220_register_clkdiv_mask(struct device *dev, const char *name,
-	const char *parent_name, unsigned long flags, void __iomem *reg,
-	u8 shift, u8 width, u32 mask, spinlock_t *lock)
+static struct clk *__hi6220_register_clkdiv(struct device *dev,
+	const char *name, const char *parent_name, unsigned long flags,
+	void __iomem *reg, u8 shift, u8 width, u32 mask,
+	unsigned long div_flags, spinlock_t *lock)
 {
 	struct hi6220_clk_divider *div;
 	struct clk *clk;
@@ -140,6 +143,7 @@ struct clk *hi6220_register_clkdiv_mask(struct device *dev, const char *name,
 	div->shift = shift;
 	div->width = width;
 	div->mask = mask;
+	div->div_flags = div_flags;
 	div->lock = lock;
 	div->hw.init = &init;
 	div->table = table;
@@ -154,10 +158,27 @@ struct clk *hi6220_register_clkdiv_mask(struct device *dev, const char *name,
 	return clk;
 }
 
+/*
+ * hi6250 (vendor hi3xxx-clk-div semantics): round down, never above the
+ * requested rate.  With CLK_DIVIDER_ROUND_CLOSEST, a 200 MHz request on
+ * clkdiv_sdio0 (ppll0 1440 MHz) resolves to 1440/7 = 205.7 MHz, which the
+ * parent mux clk_sdio0_muxsy rejects as above the request, so it stays on
+ * clk_factor_mmc0 (3.2 MHz) and the SDIO bus stays at 400 kHz.
+ */
+struct clk *hi6220_register_clkdiv_mask(struct device *dev, const char *name,
+	const char *parent_name, unsigned long flags, void __iomem *reg,
+	u8 shift, u8 width, u32 mask, spinlock_t *lock)
+{
+	return __hi6220_register_clkdiv(dev, name, parent_name, flags, reg,
+					shift, width, mask, 0, lock);
+}
+
 struct clk *hi6220_register_clkdiv(struct device *dev, const char *name,
 	const char *parent_name, unsigned long flags, void __iomem *reg,
 	u8 shift, u8 width, u32 mask_bit, spinlock_t *lock)
 {
-	return hi6220_register_clkdiv_mask(
-		dev, name, parent_name, flags, reg, shift, width, mask_bit ? BIT(mask_bit) : 0, lock);
+	return __hi6220_register_clkdiv(dev, name, parent_name, flags, reg,
+					shift, width,
+					mask_bit ? BIT(mask_bit) : 0,
+					CLK_DIVIDER_ROUND_CLOSEST, lock);
 }
