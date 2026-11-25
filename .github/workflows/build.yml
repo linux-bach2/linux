@@ -46,8 +46,8 @@ jobs:
           cat > "$HL/ci-build.sh" <<'EOF'
           set -eu
           set -o pipefail
-          # Same package set as the tablet's build setup (linux-extra/build/setup.sh).
-          apk add -q git build-base bc flex bison openssl-dev perl linux-headers elfutils-dev dtc python3 xz zstd cpio
+          # Same package set as the tablet (its setup.sh list, plus bash and GNU tar, both installed there).
+          apk add -q git build-base bc flex bison openssl-dev perl linux-headers elfutils-dev dtc python3 xz zstd cpio bash tar
           B=/root/linux-extra/build; K=$B/linux-hi6250
           git config --global --add safe.directory '*'
           if [ -d $K/.git ]; then
