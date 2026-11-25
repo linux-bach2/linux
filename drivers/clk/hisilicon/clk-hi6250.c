@@ -557,6 +557,49 @@ static const struct hisi_fixed_rate_clock hi6250_crgctrl_fixed_rate_clks[] = {
   { HI6250_CLK_I2C_REF_ASSUMED, "clk_i2c_ref_assumed", NULL, 0, 120000000 },
 };
 
+/*
+ * eMMC0 (sdhci@ff390000) clock tree, from the live vendor DT (crgctrl@0xfff35000):
+ *   clk_emmc0        hi3xxx-clkgate <0x40 0x8000>   (PEREN4 bit 15) <- clk_mmc0_muxsys
+ *   clk_mmc0_muxsys  hi3xxx-clk-mux <0xb4 0x04>     (bit 2)  {clk_factor_mmc0, clk_mmc0_div}
+ *   clk_mmc0_div     hi3xxx-clk-div <0xb4 0x78>     (bits 6:3, div 1..16) <- clkgt_mmc0
+ *   clkgt_mmc0       clk-gate       <0xf4 2>        (bit 2, hiword) <- clk_mmc0_muxpll
+ *   clk_mmc0_muxpll  hi3xxx-clk-mux <0xb4 0x01>     (bit 0)  {clk_ap_ppll0, clk_ap_ppll3}
+ *   hclk_emmc0       hi3xxx-clkgate <0x00 0x2000>   (PEREN0 bit 13) <- clk_mmc0bus_div
+ *   clk_mmc0bus_div  hi3xxx-clk-div <0xec 0x04>     (bit 2, div 1..2) <- clk_sysbus_div
+ * The bootloader already runs these (it loaded the kernel from the eMMC). Registration does not
+ * write registers. No CLK_SET_RATE_PARENT, so a rate request on a leaf cannot reprogram the
+ * shared muxes; CLK_IGNORE_UNUSED, so clk_disable_unused never gates the boot device.
+ */
+static_assert(HI6250_CLK_MMC0_MUXPLL < HI6250_CRGCTRL_NR_CLKS);
+static_assert(HI6250_CLK_ANDGT_MMC0 < HI6250_CRGCTRL_NR_CLKS);
+static_assert(HI6250_CLK_MMC0_DIV < HI6250_CRGCTRL_NR_CLKS);
+static_assert(HI6250_CLK_MMC0_MUXSYS < HI6250_CRGCTRL_NR_CLKS);
+static_assert(HI6250_CLK_EMMC0 < HI6250_CRGCTRL_NR_CLKS);
+static_assert(HI6250_CLK_MMC0BUS_DIV < HI6250_CRGCTRL_NR_CLKS);
+static_assert(HI6250_HCLK_EMMC0 < HI6250_CRGCTRL_NR_CLKS);
+
+static const struct hisi_gate_clock hi6250_crgctrl_emmc0_gate_clks[] = {
+  { HI6250_CLK_ANDGT_MMC0, "clk_andgt_mmc0", "clk_mmc0_muxpll", CLK_IGNORE_UNUSED, 0xf4, 2, CLK_GATE_HIWORD_MASK, },
+};
+
+static const struct hisi_gate_clock hi6250_crgctrl_emmc0_gate_sep_clks[] = {
+  { HI6250_HCLK_EMMC0, "hclk_emmc0", "clk_mmc0bus_div", CLK_IGNORE_UNUSED, 0x0, 13, 0, },
+  { HI6250_CLK_EMMC0, "clk_emmc0", "clk_mmc0_muxsys", CLK_IGNORE_UNUSED, 0x40, 15, 0, },
+};
+
+static const struct hi6250_divider_clock hi6250_crgctrl_emmc0_divider_clks[] = {
+  { HI6250_CLK_MMC0BUS_DIV, "clk_mmc0bus_div", "clk_sysbus_div", 0, 0xec, 2, 1, 0x40000, },
+  { HI6250_CLK_MMC0_DIV, "clk_mmc0_div", "clk_andgt_mmc0", 0, 0xb4, 3, 4, 0x780000, },
+};
+
+static const char *clk_mmc0_muxsys_emmc0_p[] = { "clk_factor_mmc0", "clk_mmc0_div" };
+static const char *clk_mmc0_muxpll_emmc0_p[] = { "clk_ppll0", "clk_ppll3" };
+
+static const struct hisi_mux_clock hi6250_crgctrl_emmc0_mux_clks[] = {
+  { HI6250_CLK_MMC0_MUXSYS, "clk_mmc0_muxsys", clk_mmc0_muxsys_emmc0_p, ARRAY_SIZE(clk_mmc0_muxsys_emmc0_p), 0, 0xb4, 2, 1, CLK_MUX_HIWORD_MASK, },
+  { HI6250_CLK_MMC0_MUXPLL, "clk_mmc0_muxpll", clk_mmc0_muxpll_emmc0_p, ARRAY_SIZE(clk_mmc0_muxpll_emmc0_p), 0, 0xb4, 0, 1, CLK_MUX_HIWORD_MASK, },
+};
+
 static void __init hi6250_clk_crg_init(struct device_node *np)
 {
 	struct hisi_clock_data *clk_data_crg;
@@ -577,5 +620,14 @@ static void __init hi6250_clk_crg_init(struct device_node *np)
 				ARRAY_SIZE(hi6250_crgctrl_divider_clks), clk_data_crg);
   hisi_clk_register_mux(hi6250_crgctrl_mux_clks,
 				ARRAY_SIZE(hi6250_crgctrl_mux_clks), clk_data_crg);
+
+	hisi_clk_register_mux(hi6250_crgctrl_emmc0_mux_clks,
+			      ARRAY_SIZE(hi6250_crgctrl_emmc0_mux_clks), clk_data_crg);
+	hisi_clk_register_gate(hi6250_crgctrl_emmc0_gate_clks,
+			       ARRAY_SIZE(hi6250_crgctrl_emmc0_gate_clks), clk_data_crg);
+	hi6250_clk_register_divider(hi6250_crgctrl_emmc0_divider_clks,
+				    ARRAY_SIZE(hi6250_crgctrl_emmc0_divider_clks), clk_data_crg);
+	hisi_clk_register_gate_sep(hi6250_crgctrl_emmc0_gate_sep_clks,
+				   ARRAY_SIZE(hi6250_crgctrl_emmc0_gate_sep_clks), clk_data_crg);
 }
 CLK_OF_DECLARE_DRIVER(hi6250_clk_crgctrl, "hisilicon,hi6250-crgctrl", hi6250_clk_crg_init);

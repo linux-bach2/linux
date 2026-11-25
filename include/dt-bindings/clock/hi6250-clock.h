@@ -171,7 +171,15 @@
 #define HI6250_CLK_SD_MUXPLL 15
 #define HI6250_CLK_I2C_REF_ASSUMED 24
 #define HI6250_CLK_I2C4 25
-#define HI6250_CRGCTRL_NR_CLKS 26
+/* eMMC0 (ff390000 sdhci) clock tree; 26..31 left free. */
+#define HI6250_CLK_MMC0_MUXPLL 32
+#define HI6250_CLK_ANDGT_MMC0 33
+#define HI6250_CLK_MMC0_DIV 34
+#define HI6250_CLK_MMC0_MUXSYS 35
+#define HI6250_CLK_EMMC0 36
+#define HI6250_CLK_MMC0BUS_DIV 37
+#define HI6250_HCLK_EMMC0 38
+#define HI6250_CRGCTRL_NR_CLKS 96   /* covers all reserved blocks up to display 76..83, see docs/AGENT-BRIEF.md */
 // #define HI6250_CLK_WD0_HIGH 1
 // #define HI6250_CLK_AT 2
 // #define HI6250_CLK_TRACK 3
