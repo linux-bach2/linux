@@ -563,6 +563,8 @@
 				compatible = "hisilicon,hi6523-charger";
 				reg = <0x6b>;
 				monitored-battery = <&battery>;
+				/* P2 managed charging (docs/mainline-power.md): CV 4100 mV, 700 mA, IIN 1000 mA, 40 s HW watchdog */
+				hisilicon,managed-charging;
 			};
 
 			/*
