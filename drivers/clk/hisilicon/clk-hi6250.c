@@ -26,6 +26,8 @@ static_assert(HI6250_CLKDIV_SDIO0 < HI6250_CRGCTRL_NR_CLKS);
 static_assert(HI6250_CLK_SDIO0_MUXSY < HI6250_CRGCTRL_NR_CLKS);
 static_assert(HI6250_CLK_SDIO0_MUXPL < HI6250_CRGCTRL_NR_CLKS);
 static_assert(HI6250_PCLK_AO_GPIO4 < HI6250_SCTRL_NR_CLKS);
+static_assert(HI6250_PCLK_AO_GPIO6 < HI6250_SCTRL_NR_CLKS);
+static_assert(HI6250_PCLK_GPIO18 < HI6250_CRGCTRL_NR_CLKS);
 
 
 // ao
@@ -174,7 +176,7 @@ static const struct hisi_gate_clock hi6250_sctrl_gate_sep_clks[] = {
   // { HI6250_PCLK_AO_GPIO2, "pclk_ao_gpio2", "clk_aobus_div", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x160, 13, 0, },
   { HI6250_PCLK_AO_GPIO4, "pclk_ao_gpio4", "clk_aobus_div", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x160, 21, 0, },
   // { HI6250_PCLK_AO_GPIO5, "pclk_ao_gpio5", "clk_aobus_div", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x160, 22, 0, },
-  // { HI6250_PCLK_AO_GPIO6, "pclk_ao_gpio6", "clk_aobus_div", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x190, 17, 0, },
+  { HI6250_PCLK_AO_GPIO6, "pclk_ao_gpio6", "clk_aobus_div", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x190, 17, 0, },
   // { HI6250_PCLK_AO_GPIO7, "pclk_ao_gpio7", "clk_aobus_div", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x190, 18, 0, },
   // { HI6250_PCLK_AO_GPIO8, "pclk_ao_gpio8", "clk_aobus_div", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x190, 19, 0, },
   // { HI6250_CLK_OUT0, "clk_out0", "clkmux_clkout0", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x160, 16, 0, },
@@ -350,7 +352,7 @@ static const struct hisi_gate_clock hi6250_crgctrl_gate_sep_clks[] = {
 //   { HI6250_PCLK_GPIO14, "pclk_gpio14", "clk_cfgbus_div", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x10, 14, 0, },
 //   { HI6250_PCLK_GPIO15, "pclk_gpio15", "clk_cfgbus_div", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x10, 15, 0, },
 //   { HI6250_PCLK_GPIO16, "pclk_gpio16", "clk_cfgbus_div", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x10, 16, 0, },
-//   { HI6250_PCLK_GPIO18, "pclk_gpio18", "clk_cfgbus_div", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x10, 18, 0, },
+{ HI6250_PCLK_GPIO18, "pclk_gpio18", "clk_cfgbus_div", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x10, 18, 0, },
 //   { HI6250_PCLK_GPIO19, "pclk_gpio19", "clk_cfgbus_div", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x10, 19, 0, },
 //   { HI6250_PCLK_GPIO20, "pclk_gpio20", "clk_cfgbus_div", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x10, 20, 0, },
 //   { HI6250_PCLK_GPIO21, "pclk_gpio21", "clk_cfgbus_div", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x10, 21, 0, },
