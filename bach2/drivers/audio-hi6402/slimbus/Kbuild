@@ -1,0 +1,7 @@
+# Vendor HiSilicon/Cadence SLIMbus manager (drivers/hisi/slimbus of the bach2 4.4 tree), out of tree.
+A := $(src)/..
+ccflags-y += -I$(A)/compat -I$(src) -I$(src)/vendor/candance -I$(src)/vendor/candance/include
+ccflags-y += -include $(A)/compat/bach2_compat.h -DHI6402_SUPPORT
+obj-m += hi6402_slimbus.o
+hi6402_slimbus-y := vendor/candance/cps_bm.o vendor/candance/src/csmi.o vendor/candance/slimbus_drv.o \
+	slimbus.o slimbus_utils.o slimbus_64xx.o slimbus_6403.o slimbus_6402.o bach2_exports.o

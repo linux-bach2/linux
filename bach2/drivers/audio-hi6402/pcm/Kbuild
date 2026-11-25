@@ -1,0 +1,8 @@
+# Vendor DSP-free PCM path (bach2 4.4 tree: drivers/hisi/hi64xx/asp_dma.c, sound/soc/hisilicon/
+# hi3xxx_asp_dma.c) and the bach2 card, out of tree on 7.0 (docs/mainline-audio-port.md).
+# Load order: hi64xx_asp_dma (ASP DMAC channel API), hi3xxx_asp_pcm (ASoC PCM component), bach2_card.
+A := $(src)/..
+ccflags-y += -I$(A)/compat -I$(A)/slimbus -I$(A)/slimbus/vendor/candance -I$(src)
+ccflags-y += -include $(A)/compat/bach2_compat.h -include $(A)/compat/bach2_asoc_compat.h -include $(A)/compat/bach2_hwlock.h
+obj-m += hi64xx_asp_dma.o hi3xxx_asp_pcm.o bach2_card.o
+hi3xxx_asp_pcm-y := hi3xxx_asp_dma.o

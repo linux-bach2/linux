@@ -80,6 +80,17 @@ jobs:
           # vmlinux.symvers, which the tablet's module builds use.
           make -j$(nproc) Image dtbs 2>&1 | tee -a $B/build.log
           [ -s vmlinux.symvers ] || { echo "no vmlinux.symvers after the Image build"; exit 1; }
+          # Out-of-tree bach2 modules (bach2/: Hi1102 Wi-Fi, HI6402 audio, TFA9894 amps), built exactly as the
+          # tablet's build-on-tablet.sh does: against vmlinux.symvers, with the same OUT paths and stage order.
+          cp vmlinux.symvers Module.symvers
+          for x in hisi110x audio-hi6402 tfa98xx; do rm -rf $B/out/$x; done
+          KDIR=$K OUT=$B/out/hisi110x JOBS=$(nproc) bash bach2/build-hisi110x.sh all > $B/ext-hisi110x.log 2>&1 || { tail -n 40 $B/ext-hisi110x.log; exit 1; }
+          for a in asp slimbus ver codec pcm; do
+            KDIR=$K OUT=$B/out/audio-hi6402 JOBS=$(nproc) bash bach2/build-audio-hi6402.sh $a >> $B/ext-audio.log 2>&1 || { tail -n 40 $B/ext-audio.log; exit 1; }
+          done
+          KDIR=$K OUT=$B/out/tfa98xx JOBS=$(nproc) bash bach2/build-tfa98xx.sh module > $B/ext-tfa98xx.log 2>&1 || { tail -n 40 $B/ext-tfa98xx.log; exit 1; }
+          if grep -nE 'modpost: .*undefined' $B/ext-*.log; then echo "unresolved symbols in the bach2 modules"; exit 1; fi
+          (cd $B && find out -name '*.ko' | sort | xargs ls -l)
           {
             echo "commit=$SHA"
             echo "kernel_release=$(cat include/config/kernel.release)"
@@ -92,22 +103,28 @@ jobs:
           # Build products only (everything git does not track); the tablet has the sources.
           # Public kernel artifact
           KREL=$(cat include/config/kernel.release)
-          rm -rf $B/out $B/hostloop; mkdir -p $B/out/modules $B/hostloop
-          make -s INSTALL_MOD_PATH=$B/out/modules INSTALL_MOD_STRIP=1 modules_install
-          rm -f $B/out/modules/lib/modules/$KREL/build
-          gzip -9nc arch/arm64/boot/Image > $B/out/Image.gz   # not a make target: keep the tree as pass 1 left it
-          cp arch/arm64/boot/dts/$DTB $B/out/
-          cat $B/out/Image.gz arch/arm64/boot/dts/$DTB > $B/out/Image.gz-dtb
-          cp .config $B/out/config; cp System.map $B/toolchain.txt $B/out/
-          tar -C $B/out/modules -czf $B/out/modules-$KREL.tar.gz lib; rm -rf $B/out/modules
+          rm -rf $B/pub $B/hostloop; mkdir -p $B/pub/modules $B/hostloop
+          make -s INSTALL_MOD_PATH=$B/pub/modules INSTALL_MOD_STRIP=1 modules_install
+          rm -f $B/pub/modules/lib/modules/$KREL/build
+          gzip -9nc arch/arm64/boot/Image > $B/pub/Image.gz   # not a make target: keep the tree as pass 1 left it
+          cp arch/arm64/boot/dts/$DTB $B/pub/
+          cat $B/pub/Image.gz arch/arm64/boot/dts/$DTB > $B/pub/Image.gz-dtb
+          cp .config $B/pub/config; cp System.map $B/toolchain.txt $B/pub/
+          tar -C $B/pub/modules -czf $B/pub/modules-$KREL.tar.gz lib; rm -rf $B/pub/modules
           # Host-loop artifact: build products only (everything git does not track); the tablet has the sources.
           git ls-files -z --others > /tmp/products
           # pax format keeps nanosecond mtimes: with whole seconds, a generator and its output written in
           # the same second look out of date to make on the tablet (15 objects rebuilt there).
           tar --format=posix --pax-option=delete=atime,delete=ctime --null -T /tmp/products -cf - | zstd -q -T0 -9 > $B/hostloop/hostloop-tree.tar.zst
           cp $B/toolchain.txt $B/hostloop/
-          (cd $B/out && sha256sum * > SHA256SUMS); (cd $B/hostloop && sha256sum * > SHA256SUMS)
-          chmod -R a+rX $B/out $B/hostloop
+          # bach2 out-of-tree modules: the .ko files (tablet paths), the logs, and the source manifest the tablet
+          # compares with its own copy of the sources
+          (cd $B && find out/hisi110x out/audio-hi6402 out/tfa98xx -name '*.ko' | sort > /tmp/kos && tar --format=posix -cf - -T /tmp/kos ext-*.log) | zstd -q -T0 -9 > $B/hostloop/modules-ext.tar.zst
+          (cd bach2 && find drivers build-*.sh -type f | LC_ALL=C sort | xargs sha256sum) > $B/hostloop/bach2-src.sha256
+          mkdir -p $B/pub/bach2-modules && (cd $B && xargs -a /tmp/kos cp --parents -t $B/pub/bach2-modules 2>/dev/null || while read -r f; do mkdir -p $B/pub/bach2-modules/$(dirname $f); cp $f $B/pub/bach2-modules/$f; done < /tmp/kos)
+          tar -C $B/pub -czf $B/pub/bach2-modules-$KREL.tar.gz bach2-modules && rm -rf $B/pub/bach2-modules
+          (cd $B/pub && sha256sum * > SHA256SUMS); (cd $B/hostloop && sha256sum * > SHA256SUMS)
+          chmod -R a+rX $B/pub $B/hostloop
           EOF
           docker run --rm -e SHA=$GITHUB_SHA -e REPO=$GITHUB_REPOSITORY -e DEFCONFIG -e DTB \
             -v "$HL:/root/linux-extra/build" "$IMAGE" sh /root/linux-extra/build/ci-build.sh
@@ -149,12 +166,12 @@ jobs:
       - name: Summary
         run: |
           echo "kernel.release: $(cat $HL/linux-hi6250/include/config/kernel.release)" >> $GITHUB_STEP_SUMMARY
-          ls -l $HL/out $HL/hostloop >> $GITHUB_STEP_SUMMARY
+          ls -l $HL/pub $HL/hostloop >> $GITHUB_STEP_SUMMARY
 
       - uses: actions/upload-artifact@v4
         with:
           name: bach2-kernel-${{ github.sha }}
-          path: /home/runner/hl/out/
+          path: /home/runner/hl/pub/
           if-no-files-found: error
 
       # Built tree for the tablet's host loop (objects only, no initramfs content, nothing private).

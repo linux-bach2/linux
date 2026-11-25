@@ -1,0 +1,9 @@
+# bach2 TFA9894 glue + NXP TFA98xx core (nxp/, vendored unchanged from the OnePlus 7 Pro
+# techpack/audio/asoc/codecs/tfa9894 driver; Apache-2.0 headers). Built by build-tfa98xx.sh.
+obj-m += tfa98xx-bach2.o
+tfa98xx-bach2-y := tfa98xx_bach2.o nxp/tfa_container.o nxp/tfa_dsp.o nxp/tfa_init.o
+ccflags-y += -I$(src)/nxp
+# Vendor code: warnings are not ours to fix; keep them out of -Werror builds.
+CFLAGS_tfa_container.o += -w
+CFLAGS_tfa_dsp.o += -w
+CFLAGS_tfa_init.o += -w
