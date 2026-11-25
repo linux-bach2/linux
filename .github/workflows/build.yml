@@ -49,6 +49,8 @@ jobs:
           # Same package set as the tablet (its setup.sh list, plus bash and GNU tar, both installed there).
           apk add -q git build-base bc flex bison openssl-dev perl linux-headers elfutils-dev dtc python3 xz zstd cpio bash tar
           B=/root/linux-extra/build; K=$B/linux-hi6250
+          # The runner user saves the cache: keep the tree readable even if the build fails.
+          trap 'chmod -R a+rX $K 2>/dev/null || true' EXIT
           git config --global --add safe.directory '*'
           if [ -d $K/.git ]; then
             echo "tree cache: $(git -C $K rev-parse --short=12 HEAD) -> ${SHA:0:12}"
@@ -70,7 +72,10 @@ jobs:
           make -s olddefconfig
           if [ -f /tmp/old.config ] && cmp -s /tmp/old.config .config; then touch -r /tmp/old.config .config; fi
           make -j$(nproc) Image dtbs modules 2>&1 | tee $B/build.log
-          cp vmlinux.symvers Module.symvers.vmlinux
+          # End exactly like the tablet's pass 1 (Image + DTB, no modules): modpost then writes
+          # vmlinux.symvers, which the tablet's module builds use.
+          make -j$(nproc) Image dtbs 2>&1 | tee -a $B/build.log
+          [ -s vmlinux.symvers ] || { echo "no vmlinux.symvers after the Image build"; exit 1; }
           {
             echo "commit=$SHA"
             echo "kernel_release=$(cat include/config/kernel.release)"
@@ -112,23 +117,27 @@ jobs:
           path: /home/runner/hl/linux-hi6250
           key: hl-tree-${{ env.DEFCONFIG }}-${{ github.ref_name }}-${{ github.sha }}
 
-      - name: Drop superseded cache of this branch
-        if: always() && steps.save.outcome == 'success' && startsWith(steps.cache.outputs.cache-matched-key, format('hl-tree-{0}-{1}-', env.DEFCONFIG, github.ref_name)) && steps.cache.outputs.cache-matched-key != format('hl-tree-{0}-{1}-{2}', env.DEFCONFIG, github.ref_name, github.sha)
-        env:
-          GH_TOKEN: ${{ github.token }}
-          OLD: ${{ steps.cache.outputs.cache-matched-key }}
-        run: gh cache delete "$OLD" -R "$GITHUB_REPOSITORY" || true
-
       # actions/cache/save only warns when it cannot save; make that visible as a failure.
       - name: Check tree cache was saved
+        id: check
         if: always() && steps.save.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           KEY: hl-tree-${{ env.DEFCONFIG }}-${{ github.ref_name }}-${{ github.sha }}
         run: |
-          gh cache list -R "$GITHUB_REPOSITORY" --key "$KEY" --json key,sizeInBytes | tee /tmp/c.json
+          for i in 1 2 3 4 5 6; do
+            gh cache list -R "$GITHUB_REPOSITORY" --key "$KEY" --json key,sizeInBytes | tee /tmp/c.json
+            grep -q "\"$KEY\"" /tmp/c.json && break; sleep 5
+          done
           grep -q "\"$KEY\"" /tmp/c.json || { echo "::error::tree cache $KEY was not saved"; exit 1; }
           echo "Tree cache saved: $(python3 -c 'import json;print(json.load(open("/tmp/c.json"))[0]["sizeInBytes"]//2**20)') MiB" >> $GITHUB_STEP_SUMMARY
+
+      - name: Drop superseded cache of this branch
+        if: always() && steps.check.outcome == 'success' && startsWith(steps.cache.outputs.cache-matched-key, format('hl-tree-{0}-{1}-', env.DEFCONFIG, github.ref_name)) && steps.cache.outputs.cache-matched-key != format('hl-tree-{0}-{1}-{2}', env.DEFCONFIG, github.ref_name, github.sha)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OLD: ${{ steps.cache.outputs.cache-matched-key }}
+        run: gh cache delete "$OLD" -R "$GITHUB_REPOSITORY" || true
 
       - name: Summary
         run: |
