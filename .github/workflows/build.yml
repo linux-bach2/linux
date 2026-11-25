@@ -14,127 +14,138 @@ permissions:
   contents: read
   actions: write   # delete the superseded build cache entry
 
+# The kernel is built in an Alpine 3.21 container, in-tree, at the same absolute path and with the
+# same toolchain as on the bach2 tablet (/root/linux-extra/build/linux-hi6250, gcc 14.2, binutils
+# 2.43). The tablet can then take the built tree as-is (artifact "hostloop-tree-*") and only embed
+# its private initramfs and relink, without compiling the kernel itself.
+# Incremental builds: the whole tree (sources, .git, objects) is cached; `git checkout` of the new
+# commit rewrites only the files that changed, so make rebuilds only what depends on them.
 jobs:
   kernel:
-    # Native arm64 runner: no cross toolchain needed.
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 120
+    timeout-minutes: 150
     env:
+      HL: /home/runner/hl                 # mounted as /root/linux-extra/build in the container
+      IMAGE: alpine:3.21
       DEFCONFIG: bach2_defconfig
       DTB: hisilicon/hi6250-huawei-bach2.dtb
-      O: /home/runner/kbuild   # out-of-tree object dir, cached between runs (absolute: actions/cache rejects '..')
-      KBUILD_BUILD_USER: ci
-      KBUILD_BUILD_HOST: linux-bach2
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends \
-            bc bison flex libssl-dev libelf-dev cpio kmod python3 device-tree-compiler
-
-      # Incremental builds: the whole object dir is cached, keyed per branch and commit.
-      # A new branch falls back to the newest cache of any branch.
-      - name: Restore object cache
+      - name: Restore tree cache
         id: cache
         uses: actions/cache/restore@v4
         with:
-          path: ${{ env.O }}
-          key: kbuild-${{ env.DEFCONFIG }}-${{ github.ref_name }}-${{ github.sha }}
+          path: /home/runner/hl/linux-hi6250
+          key: hl-tree-${{ env.DEFCONFIG }}-${{ github.ref_name }}-${{ github.sha }}
           restore-keys: |
-            kbuild-${{ env.DEFCONFIG }}-${{ github.ref_name }}-
-            kbuild-${{ env.DEFCONFIG }}-
+            hl-tree-${{ env.DEFCONFIG }}-${{ github.ref_name }}-
+            hl-tree-${{ env.DEFCONFIG }}-
 
-      # Checkout gives every file the current mtime, which would make make rebuild everything.
-      # Pin all sources to an old date, then mark only files changed since the cached commit as new.
-      - name: Prepare incremental build
+      - name: Build in Alpine 3.21 (tablet paths and toolchain)
         run: |
-          mkdir -p "$O"
-          git ls-files -z | xargs -0 touch -h -d '2000-01-01 00:00:00'
-          PREV=$(cat "$O/.ci-sha" 2>/dev/null || true)
-          if [ -z "$PREV" ]; then
-            echo "No object cache: full build" | tee -a $GITHUB_STEP_SUMMARY
-          elif [ "$PREV" = "$GITHUB_SHA" ]; then
-            echo "Object cache is from this commit" | tee -a $GITHUB_STEP_SUMMARY
-          elif git fetch -q --depth=1 origin "$PREV" && git diff --name-only "$PREV" HEAD > /tmp/changed; then
-            echo "Object cache from ${PREV:0:12}: $(wc -l < /tmp/changed) changed files" | tee -a $GITHUB_STEP_SUMMARY
-            while IFS= read -r f; do [ -e "$f" ] && touch "$f"; done < /tmp/changed
-          else
-            echo "Cached commit ${PREV:0:12} not fetchable: full build" | tee -a $GITHUB_STEP_SUMMARY
-            rm -rf "$O"; mkdir -p "$O"
-          fi
-          echo "KBUILD_BUILD_TIMESTAMP=$(git log -1 --format=%cD)" >> $GITHUB_ENV
-
-      - name: Configure
-        run: |
-          [ -f "$O/.config" ] && cp -p "$O/.config" /tmp/old.config
-          make O="$O" $DEFCONFIG
-          # keep the old mtime if nothing changed, so kconfig does not resync
-          if [ -f /tmp/old.config ] && cmp -s /tmp/old.config "$O/.config"; then
-            touch -r /tmp/old.config "$O/.config"
-          fi
-
-      - name: Build Image, DTBs and modules
-        run: |
+          mkdir -p "$HL"
+          cat > "$HL/ci-build.sh" <<'EOF'
+          set -eu
           set -o pipefail
-          make O="$O" -j$(nproc) Image.gz dtbs modules 2>&1 | tee build.log
-          echo "### Compiled $(grep -cE '^  (CC|AS) ' build.log) objects" >> $GITHUB_STEP_SUMMARY
-          grep -E '(warning|error):' build.log | sort -u > warnings.log || true
-          echo "### Build warnings: $(wc -l < warnings.log)" >> $GITHUB_STEP_SUMMARY
+          # Same package set as the tablet's build setup (linux-extra/build/setup.sh).
+          apk add -q git build-base bc flex bison openssl-dev perl linux-headers elfutils-dev dtc python3 xz zstd cpio
+          B=/root/linux-extra/build; K=$B/linux-hi6250
+          git config --global --add safe.directory '*'
+          if [ -d $K/.git ]; then
+            echo "tree cache: $(git -C $K rev-parse --short=12 HEAD) -> ${SHA:0:12}"
+            git -C $K fetch -q --depth=1 origin "$SHA"
+            git -C $K checkout -q -f "$SHA"
+          else
+            echo "tree cache: none (full build)"
+            rm -rf $K; git init -q $K
+            git -C $K remote add origin "https://github.com/$REPO"
+            git -C $K fetch -q --depth=1 origin "$SHA"
+            git -C $K checkout -q -f FETCH_HEAD
+          fi
+          cd $K
+          # Placeholder initramfs list at the path the tablet uses; the tablet regenerates it.
+          [ -f $B/initramfs.list ] || echo 'dir /dev 0755 0 0' > $B/initramfs.list
+          [ -f .config ] && cp -p .config /tmp/old.config || true
+          make -s $DEFCONFIG
+          scripts/config --set-str INITRAMFS_SOURCE "$B/initramfs.list"
+          make -s olddefconfig
+          if [ -f /tmp/old.config ] && cmp -s /tmp/old.config .config; then touch -r /tmp/old.config .config; fi
+          make -j$(nproc) Image dtbs modules 2>&1 | tee $B/build.log
+          cp vmlinux.symvers Module.symvers.vmlinux
+          {
+            echo "commit=$SHA"
+            echo "kernel_release=$(cat include/config/kernel.release)"
+            echo "gcc=$(gcc --version | head -n1)"
+            echo "ld=$(ld -v)"
+            apk list -I 2>/dev/null | grep -E '^(gcc|binutils|make|musl-dev|flex|bison|perl|python3|dtc|openssl-dev|elfutils-dev|cpio)-[0-9]' | cut -d' ' -f1 | sort | sed 's/^/pkg=/'
+            echo "config_sha256=$(sha256sum < .config | cut -c1-64)"
+          } > $B/toolchain.txt
+          cat $B/toolchain.txt
+          # Build products only (everything git does not track); the tablet has the sources.
+          # Public kernel artifact
+          KREL=$(cat include/config/kernel.release)
+          rm -rf $B/out $B/hostloop; mkdir -p $B/out/modules $B/hostloop
+          make -s INSTALL_MOD_PATH=$B/out/modules INSTALL_MOD_STRIP=1 modules_install
+          rm -f $B/out/modules/lib/modules/$KREL/build
+          cp arch/arm64/boot/Image.gz arch/arm64/boot/dts/$DTB $B/out/
+          cat arch/arm64/boot/Image.gz arch/arm64/boot/dts/$DTB > $B/out/Image.gz-dtb
+          cp .config $B/out/config; cp System.map $B/toolchain.txt $B/out/
+          tar -C $B/out/modules -czf $B/out/modules-$KREL.tar.gz lib; rm -rf $B/out/modules
+          # Host-loop artifact: build products only (everything git does not track); the tablet has the sources.
+          git ls-files -z --others > /tmp/products
+          tar --null -T /tmp/products -cf - | zstd -q -T0 -9 > $B/hostloop/hostloop-tree.tar.zst
+          cp $B/toolchain.txt $B/hostloop/
+          (cd $B/out && sha256sum * > SHA256SUMS); (cd $B/hostloop && sha256sum * > SHA256SUMS)
+          chmod -R a+rX $B/out $B/hostloop
+          EOF
+          docker run --rm -e SHA=$GITHUB_SHA -e REPO=$GITHUB_REPOSITORY -e DEFCONFIG -e DTB \
+            -v "$HL:/root/linux-extra/build" "$IMAGE" sh /root/linux-extra/build/ci-build.sh
+          echo "### Compiled $(grep -cE '^  (CC|AS) ' $HL/build.log) objects" >> $GITHUB_STEP_SUMMARY
+          grep -E '(warning|error):' $HL/build.log | sort -u > $HL/warnings.log || true
+          echo "### Build warnings: $(wc -l < $HL/warnings.log)" >> $GITHUB_STEP_SUMMARY
+          sed 's/^/    /' $HL/toolchain.txt >> $GITHUB_STEP_SUMMARY
 
-      - name: Record cached commit
-        if: always()
-        run: echo "$GITHUB_SHA" > "$O/.ci-sha"
-
-      # Saved even if the build failed: the objects that did compile are still valid.
-      - name: Save object cache
+      - name: Save tree cache
         id: save
-        if: always() && steps.cache.outputs.cache-matched-key != format('kbuild-{0}-{1}-{2}', env.DEFCONFIG, github.ref_name, github.sha)
+        if: always() && steps.cache.outputs.cache-matched-key != format('hl-tree-{0}-{1}-{2}', env.DEFCONFIG, github.ref_name, github.sha)
         uses: actions/cache/save@v4
         with:
-          path: ${{ env.O }}
-          key: kbuild-${{ env.DEFCONFIG }}-${{ github.ref_name }}-${{ github.sha }}
+          path: /home/runner/hl/linux-hi6250
+          key: hl-tree-${{ env.DEFCONFIG }}-${{ github.ref_name }}-${{ github.sha }}
 
       - name: Drop superseded cache of this branch
-        if: always() && steps.save.outcome == 'success' && startsWith(steps.cache.outputs.cache-matched-key, format('kbuild-{0}-{1}-', env.DEFCONFIG, github.ref_name)) && steps.cache.outputs.cache-matched-key != format('kbuild-{0}-{1}-{2}', env.DEFCONFIG, github.ref_name, github.sha)
+        if: always() && steps.save.outcome == 'success' && startsWith(steps.cache.outputs.cache-matched-key, format('hl-tree-{0}-{1}-', env.DEFCONFIG, github.ref_name)) && steps.cache.outputs.cache-matched-key != format('hl-tree-{0}-{1}-{2}', env.DEFCONFIG, github.ref_name, github.sha)
         env:
           GH_TOKEN: ${{ github.token }}
           OLD: ${{ steps.cache.outputs.cache-matched-key }}
         run: gh cache delete "$OLD" -R "$GITHUB_REPOSITORY" || true
 
       # actions/cache/save only warns when it cannot save; make that visible as a failure.
-      - name: Check object cache was saved
+      - name: Check tree cache was saved
         if: always() && steps.save.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
-          KEY: kbuild-${{ env.DEFCONFIG }}-${{ github.ref_name }}-${{ github.sha }}
+          KEY: hl-tree-${{ env.DEFCONFIG }}-${{ github.ref_name }}-${{ github.sha }}
         run: |
           gh cache list -R "$GITHUB_REPOSITORY" --key "$KEY" --json key,sizeInBytes | tee /tmp/c.json
-          grep -q "\"$KEY\"" /tmp/c.json || { echo "::error::object cache $KEY was not saved"; exit 1; }
-          echo "Object cache saved: $(python3 -c 'import json;print(json.load(open("/tmp/c.json"))[0]["sizeInBytes"]//2**20)') MiB" >> $GITHUB_STEP_SUMMARY
+          grep -q "\"$KEY\"" /tmp/c.json || { echo "::error::tree cache $KEY was not saved"; exit 1; }
+          echo "Tree cache saved: $(python3 -c 'import json;print(json.load(open("/tmp/c.json"))[0]["sizeInBytes"]//2**20)') MiB" >> $GITHUB_STEP_SUMMARY
 
-      - name: Package
+      - name: Summary
         run: |
-          KREL=$(cat "$O/include/config/kernel.release")
-          mkdir -p out/modules
-          make -s O="$O" INSTALL_MOD_PATH=$PWD/out/modules INSTALL_MOD_STRIP=1 modules_install
-          rm -f out/modules/lib/modules/$KREL/build
-          cp "$O/arch/arm64/boot/Image.gz" out/
-          cp "$O/arch/arm64/boot/dts/$DTB" out/
-          cat "$O/arch/arm64/boot/Image.gz" "$O/arch/arm64/boot/dts/$DTB" > out/Image.gz-dtb
-          cp "$O/.config" out/config
-          cp "$O/System.map" warnings.log out/
-          tar -C out/modules -czf out/modules-$KREL.tar.gz lib
-          rm -rf out/modules
-          (cd out && sha256sum * > SHA256SUMS)
-          echo "kernel.release: $KREL" >> $GITHUB_STEP_SUMMARY
-          ls -l out >> $GITHUB_STEP_SUMMARY
+          echo "kernel.release: $(cat $HL/linux-hi6250/include/config/kernel.release)" >> $GITHUB_STEP_SUMMARY
+          ls -l $HL/out $HL/hostloop >> $GITHUB_STEP_SUMMARY
 
       - uses: actions/upload-artifact@v4
         with:
           name: bach2-kernel-${{ github.sha }}
-          path: out/
+          path: /home/runner/hl/out/
+          if-no-files-found: error
+
+      # Built tree for the tablet's host loop (objects only, no initramfs content, nothing private).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hostloop-tree-${{ github.sha }}
+          path: /home/runner/hl/hostloop/
+          compression-level: 0
+          retention-days: 7
           if-no-files-found: error
