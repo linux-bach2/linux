@@ -395,4 +395,12 @@
 // #define HI6250_CLK_MUX_ISPSN 222
 // #define HI6250_CLK_RXDCFG_MUX 223
 
+/*
+ * IOMCU CRG (0xffd7e000, "hisilicon,hi6250-iomcu"): a separate provider with its own ID space, so
+ * HI6250_CRGCTRL_NR_CLKS is not involved. Sensor bus i2c@ffd71000 (docs/mainline-accel.md).
+ */
+#define HI6250_IOMCU_CLK_I2C0 0
+#define HI6250_IOMCU_CLK_I2C_REF_ASSUMED 1
+#define HI6250_IOMCU_NR_CLKS 2
+
 #endif

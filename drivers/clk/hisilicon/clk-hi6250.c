@@ -637,3 +637,38 @@ static void __init hi6250_clk_crg_init(struct device_node *np)
 				   ARRAY_SIZE(hi6250_crgctrl_emmc0_gate_sep_clks), clk_data_crg);
 }
 CLK_OF_DECLARE_DRIVER(hi6250_clk_crgctrl, "hisilicon,hi6250-crgctrl", hi6250_clk_crg_init);
+
+/*
+ * IOMCU CRG at 0xffd7e000: CLKEN0 0x10 / CLKDIS0 0x14 / CLKSTAT0 0x18 (the hisi "gate_sep" layout:
+ * enable, +4 disable, +8 status) [C: vendor inputhub_bridge.h CLKEN0_OFFSET 0x010, CLKSTAT0_OFFSET
+ * 0x18]. Only the I2C0 gate is modelled. Bit 3 is [I]: mainline clk-hi3660.c has clk_i2c0_iomcu at
+ * 0x10 bit 3 for the same block at the same address (i2c0 at 0xffd71000, SPI 118 on both SoCs),
+ * and the hi6250 I2C0 reset is bit 3 too [C: vendor I2C_0_RST_VAL]. Under mainline before any
+ * write, CLKSTAT0 = 0x42082c21 (bit 3 clear) [V T2 log 20261124-181737].
+ * Parent: vendor clk_i2c0 is a 1:1 fixed factor of the fixed 128 MHz clk_fll_src [C live DT];
+ * the IOMCU clk_sel/div are not modelled. If the real rate is lower, SCL only gets slower.
+ * CLK_IGNORE_UNUSED: nothing here writes the register unless a consumer enables the clock.
+ */
+static const struct hisi_fixed_rate_clock hi6250_iomcu_fixed_rate_clks[] = {
+	{ HI6250_IOMCU_CLK_I2C_REF_ASSUMED, "iomcu_i2c_ref_assumed", NULL, 0, 128000000 },
+};
+
+static const struct hisi_gate_clock hi6250_iomcu_gate_sep_clks[] = {
+	{ HI6250_IOMCU_CLK_I2C0, "clk_i2c0_iomcu", "iomcu_i2c_ref_assumed",
+	  CLK_IGNORE_UNUSED, 0x10, 3, 0, },
+};
+
+static void __init hi6250_clk_iomcu_init(struct device_node *np)
+{
+	struct hisi_clock_data *clk_data;
+
+	clk_data = hisi_clk_init(np, HI6250_IOMCU_NR_CLKS);
+	if (!clk_data)
+		return;
+
+	hisi_clk_register_fixed_rate(hi6250_iomcu_fixed_rate_clks,
+				ARRAY_SIZE(hi6250_iomcu_fixed_rate_clks), clk_data);
+	hisi_clk_register_gate_sep(hi6250_iomcu_gate_sep_clks,
+				ARRAY_SIZE(hi6250_iomcu_gate_sep_clks), clk_data);
+}
+CLK_OF_DECLARE_DRIVER(hi6250_clk_iomcu, "hisilicon,hi6250-iomcu", hi6250_clk_iomcu_init);
