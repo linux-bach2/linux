@@ -250,6 +250,13 @@ static const struct snd_pcm_hardware hi3xxx_asp_dmac_hardware = {
 	 * S16 drains at 2x. Only 24-bit samples in 32-bit containers play at real time; S16 users go through
 	 * plughw or a converting GStreamer sink. */
 	.formats		= SNDRV_PCM_FMTBIT_S24_LE,
+	/* The SLIMbus play track and the DMA run at 48 kHz only. Without these limits ALSA accepted the UI's 8 kHz PCMU
+	 * as-is, so it played ~6x too fast and the period checks fired every 3 ms (A6, cycle 18 [V]). */
+	.rates			= SNDRV_PCM_RATE_48000,
+	.rate_min		= 48000,
+	.rate_max		= 48000,
+	.channels_min		= 2,
+	.channels_max		= 2,
 	.period_bytes_min	= 32,
 	.period_bytes_max	= 16 * 1024,
 	.periods_min		= 2,
