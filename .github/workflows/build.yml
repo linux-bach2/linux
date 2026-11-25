@@ -22,7 +22,7 @@ jobs:
     env:
       DEFCONFIG: bach2_defconfig
       DTB: hisilicon/hi6250-huawei-bach2.dtb
-      O: ${{ github.workspace }}/../kbuild   # out-of-tree object dir, cached between runs
+      O: /home/runner/kbuild   # out-of-tree object dir, cached between runs (absolute: actions/cache rejects '..')
       KBUILD_BUILD_USER: ci
       KBUILD_BUILD_HOST: linux-bach2
     steps:
@@ -104,6 +104,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           OLD: ${{ steps.cache.outputs.cache-matched-key }}
         run: gh cache delete "$OLD" -R "$GITHUB_REPOSITORY" || true
+
+      # actions/cache/save only warns when it cannot save; make that visible as a failure.
+      - name: Check object cache was saved
+        if: always() && steps.save.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: kbuild-${{ env.DEFCONFIG }}-${{ github.ref_name }}-${{ github.sha }}
+        run: |
+          gh cache list -R "$GITHUB_REPOSITORY" --key "$KEY" --json key,sizeInBytes | tee /tmp/c.json
+          grep -q "\"$KEY\"" /tmp/c.json || { echo "::error::object cache $KEY was not saved"; exit 1; }
+          echo "Object cache saved: $(python3 -c 'import json;print(json.load(open("/tmp/c.json"))[0]["sizeInBytes"]//2**20)') MiB" >> $GITHUB_STEP_SUMMARY
 
       - name: Package
         run: |
