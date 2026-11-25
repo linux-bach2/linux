@@ -10,11 +10,14 @@
 #include <linux/of_address.h>
 #include <linux/platform_device.h>
 #include <linux/reboot.h>
+#include <linux/string.h>
+#include <linux/of.h>
 #include <linux/regmap.h>
 #include <linux/gpio/consumer.h>
 #include <linux/mfd/syscon.h>
 
 struct hi6250_reboot {
+	u32 default_reason;
 	struct device *dev;
 	struct regmap *pmuctrl;
 	struct regmap *sysctrl;
@@ -75,10 +78,23 @@ static int hi6250_restart_handler(
 
 	dev_info(hi6250_reboot->dev, "[restart]running out of goops");
 
-	hi6250_reset_with_reason(
-		hi6250_reboot,
-    HI6250_REBOOT_REASON_COLDBOOT);
-	
+	{
+		u8 reason = hi6250_reboot->default_reason;
+		const char *cmd = data->cmd;
+
+		/* vendor enum (mntn_public_interface.h): bootloader 0x01, recovery 0x02, erecovery 0x08 */
+		if (cmd && !strcmp(cmd, "bootloader"))
+			reason = 0x01;
+		else if (cmd && !strcmp(cmd, "recovery"))
+			reason = 0x02;
+		else if (cmd && !strcmp(cmd, "erecovery"))
+			reason = 0x08;
+		else if (cmd && !strcmp(cmd, "coldboot"))
+			reason = HI6250_REBOOT_REASON_COLDBOOT;
+		dev_info(hi6250_reboot->dev, "restart cmd=%s reason=0x%02x\n", cmd ? cmd : "(none)", reason);
+		hi6250_reset_with_reason(hi6250_reboot, reason);
+	}
+
 	while (1)
 		cpu_do_idle();
 
@@ -114,6 +130,8 @@ static int hi6250_reboot_probe(struct platform_device *pdev)
 	if (!hi6250_reboot)
 		return -ENOMEM;
 
+	hi6250_reboot->default_reason = HI6250_REBOOT_REASON_COLDBOOT;
+	of_property_read_u32(np, "hisilicon,default-reboot-reason", &hi6250_reboot->default_reason);
 	hi6250_reboot->pmuctrl = syscon_regmap_lookup_by_phandle(np,
 						  "hisilicon,pmuctrl-syscon");
 	if (IS_ERR(hi6250_reboot->pmuctrl))
