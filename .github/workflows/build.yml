@@ -1,0 +1,75 @@
+name: build
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kernel:
+    # Native arm64 runner: no cross toolchain needed.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    env:
+      DEFCONFIG: bach2_defconfig
+      DTB: hisilicon/hi6250-huawei-bach2.dtb
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 2G
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            bc bison flex libssl-dev libelf-dev cpio kmod python3 ccache device-tree-compiler
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ github.ref_name }}-
+            ccache-
+
+      - name: Configure
+        run: |
+          make $DEFCONFIG
+          cp .config config-$DEFCONFIG
+
+      - name: Build Image, DTBs and modules
+        run: |
+          make -j$(nproc) CC="ccache gcc" Image.gz dtbs modules 2>&1 | tee build.log
+          grep -E '(warning|error):' build.log | sort -u > warnings.log || true
+          echo "### Build warnings: $(wc -l < warnings.log)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Package
+        run: |
+          KREL=$(cat include/config/kernel.release)
+          mkdir -p out/modules
+          make -s INSTALL_MOD_PATH=$PWD/out/modules INSTALL_MOD_STRIP=1 modules_install
+          rm -f out/modules/lib/modules/$KREL/build
+          cp arch/arm64/boot/Image.gz out/
+          cp arch/arm64/boot/dts/$DTB out/
+          cat arch/arm64/boot/Image.gz arch/arm64/boot/dts/$DTB > out/Image.gz-dtb
+          cp config-$DEFCONFIG out/config
+          cp System.map warnings.log out/
+          tar -C out/modules -czf out/modules-$KREL.tar.gz lib
+          rm -rf out/modules
+          (cd out && sha256sum * > SHA256SUMS)
+          echo "kernel.release: $KREL" >> $GITHUB_STEP_SUMMARY
+          ls -l out >> $GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bach2-kernel-${{ github.sha }}
+          path: out/
+          if-no-files-found: error
