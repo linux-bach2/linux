@@ -286,6 +286,10 @@ static const u32 bach2_col[16] = { 0xffffffff, 0xffff0000, 0xffffff00, 0xff00ff0
 				   0xff00ffff, 0xff0000ff, 0xffff00ff, 0xffff8000,
 				   0xff8000ff, 0xff80ff00, 0xffff80c0, 0xff008080,
 				   0xff804000, 0xff800000, 0xff808080, 0xff404040 };
+void bach2_crumb_early(int n);
+void bach2_line(int k);
+void bach2_crumb(int n);
+extern int bach2_nline;
 int bach2_nline;
 void __init bach2_crumb_early(int n)
 {
