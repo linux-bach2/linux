@@ -825,4 +825,23 @@
 		pinctrl-single,pins = <0x18 1 0x1c 1>;
 	};
 };
+
+/*
+ * SoC RTC (proposed 0130, docs/mainline-suspend.md): stock DT "soc_rtc" (hisilicon,soc-rtc) at 0xfff04000,
+ * GIC SPI 46 [V live DT]. Its PrimeCell IDs read 31 10 04 00 0d f0 05 b1, an ARM PL031 [V power survey,
+ * self-cycle 20261125-150339-49e14f], found stopped (CR=0). rtc-pl031 sets CR.EN at probe. It is the wake
+ * alarm for s2idle; mainline has no driver for the PMIC RTC that stock uses. apb_pclk: the AO APB clock,
+ * as for the AO GPIO blocks.
+ */
+/ {
+	soc {
+		rtc@fff04000 {
+			compatible = "arm,pl031", "arm,primecell";
+			reg = <0x0 0xfff04000 0x0 0x1000>;
+			interrupts = <GIC_SPI 46 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&ao_ctrl HI6250_APB_PCLK>;
+			clock-names = "apb_pclk";
+		};
+	};
+};
 #include "hi6250-huawei-bach2-emmc.dtsi"
