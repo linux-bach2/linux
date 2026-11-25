@@ -55,7 +55,11 @@ jobs:
           if [ -d $K/.git ]; then
             echo "tree cache: $(git -C $K rev-parse --short=12 HEAD) -> ${SHA:0:12}"
             git -C $K fetch -q --depth=1 origin "$SHA"
+            # The cache restore changes every file's inode/ctime; refresh the index first, or the
+            # checkout rewrites (and re-timestamps) every file and make rebuilds everything.
+            git -C $K update-index -q --refresh || true
             git -C $K checkout -q -f "$SHA"
+            echo "files changed by the checkout: $(find $K -path $K/.git -prune -o -type f -newer $K/.config -print | grep -vcE '\.(o|cmd|a|ko|mod|order|symvers)$' || true)"
           else
             echo "tree cache: none (full build)"
             rm -rf $K; git init -q $K
