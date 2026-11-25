@@ -647,6 +647,34 @@
 		pinctrl-0 = <&i2c3_pins>;
 		#address-cells = <1>;
 		#size-cells = <0>;
+
+		/*
+		 * 4x TFA9894 (proposed 0062). Bound only by the out-of-tree tfa98xx-bach2.ko (BACH2_TFA builds);
+		 * no in-tree driver matches "nxp,tfa9894". Reset GPIO 58 reads low at boot (A1), so it is not described.
+		 */
+		/* stock smartpakit chip_id 1, container device 'R' (right-up), TDM slot 1 */
+		amplifier@34 {
+			compatible = "nxp,tfa9894";
+			reg = <0x34>;
+		};
+
+		/* stock smartpakit chip_id 2, container device 'LT' (left-down), TDM slot 0 */
+		amplifier@35 {
+			compatible = "nxp,tfa9894";
+			reg = <0x35>;
+		};
+
+		/* stock smartpakit chip_id 3, container device 'RQ' (right-down), TDM slot 1 */
+		amplifier@36 {
+			compatible = "nxp,tfa9894";
+			reg = <0x36>;
+		};
+
+		/* stock smartpakit chip_id 0, container device 'L' (left-up), TDM slot 0 */
+		amplifier@37 {
+			compatible = "nxp,tfa9894";
+			reg = <0x37>;
+		};
 	};
 };
 
