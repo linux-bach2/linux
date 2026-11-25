@@ -626,3 +626,33 @@
 &reboot {
 	hisilicon,default-reboot-reason = <0x01>;
 };
+
+/*
+ * Speaker amplifiers: bus only (proposed 0060/0061, docs/mainline-amps.md).
+ * Stock i2c@FDF0C000 (alias i2c3; i2c-1 on the vendor kernel): DesignWare, SPI 81, clock clk_i2c3
+ * (CRG 0x20 bit 7), reset CRG 0x78/0x7c bit 7, vendor clock-rate 120 MHz, pins gpio009/gpio010.
+ * Stock children: 4x TFA9894 at 0x34-0x37 (smartpakit chip_id 1, 2, 3, 0). They are deliberately
+ * not described: nothing in this kernel binds to them, and AMP_DIAG only reads them from userspace.
+ * Amp reset (GPIO 58) and IRQs (GPIO 194-197, secure gpio24 bank) are not described either.
+ */
+&{/soc} {
+	i2c3: i2c@fdf0c000 {
+		compatible = "snps,designware-i2c";
+		reg = <0x0 0xfdf0c000 0x0 0x1000>;
+		interrupts = <GIC_SPI 81 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&crg_ctrl HI6250_CLK_I2C3>;
+		resets = <&crg_rst 0x78 7>;
+		clock-frequency = <100000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&i2c3_pins>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+	};
+};
+
+&pmx0 {
+	/* Stock gpio009/gpio010_pmx_func (pmx0 0x018/0x01c): function 1 = I2C3 */
+	i2c3_pins: i2c3-pins {
+		pinctrl-single,pins = <0x18 1 0x1c 1>;
+	};
+};
