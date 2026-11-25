@@ -187,17 +187,20 @@
 			vqmmc-supply = <&wifi_vqmmc>;
 			bus-width = <4>;
 			/*
-			 * Stage A: SD high-speed (CCCR SHS) at 3.3 V signalling. ciu
-			 * 400 MHz wanted, ppll0 1440 / 4 = 360 MHz, card clock 45 MHz;
-			 * SD_HS phases {6, 0, 15, 15} (vendor SDIO SD_HS entry).
+			 * Stage B: UHS SDR104 at 160 MHz, as stock (CMD11 to 1.8 V,
+			 * timing 6, 160 MHz, tuned). Needs dw_mmc-k3 patch 0007: ciu
+			 * ppll0 1440 MHz / (8 + 1). The 1.8 V switch is CMD11 only;
+			 * neither stock nor mainline drives any pad-voltage control on
+			 * mmc2 (docs/sdio-clock.md). SDR104 only: a SDR50 fallback here
+			 * would ask 100 MHz, above the stock SDR50 rate (66.9 MHz).
 			 */
-			max-frequency = <50000000>;
+			max-frequency = <160000000>;
 			cap-sd-highspeed;
+			sd-uhs-sdr104;
 			fifo-depth = <0x100>;
 			non-removable;
 			no-mmc;
 			no-sd;
-			no-1-8-v;
 			cap-sdio-irq;
 			keep-power-in-suspend;
 			#address-cells = <1>;
