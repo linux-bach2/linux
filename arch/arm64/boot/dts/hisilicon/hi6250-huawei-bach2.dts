@@ -741,6 +741,17 @@
 &modem_log { status = "disabled"; };
 &xmode_data { status = "disabled"; };
 
+/*
+ * SP805 (watchdog@e8a06000). Counter clock: clk_wd0_mux (CRG 0x140 bit 17: clkin_ref 32764 Hz or
+ * pclk_wd0_high), as in the live vendor DT, so WDTLOAD follows the source the bootloader selected.
+ * Bus clock: pclk_wd0_high (CRG gate 0x20 bit 16, named as the block's APB clock) instead of the
+ * fixed apb_pclk, so the gate is held even when the counter runs from clkin_ref. Needs proposed/0090.
+ */
+&watchdog0 {
+	clocks = <&crg_ctrl HI6250_CRG_CLK_WD0_MUX>, <&crg_ctrl HI6250_PCLK_WD0_HIGH>;
+	clock-names = "wdog_clk", "apb_pclk";
+};
+
 &usb_phy {
 	status = "ok";
 	/* agassi2 values; bach2 stock values not yet extracted */
