@@ -952,6 +952,18 @@ config INPUT_HISI_POWERKEY
 	  To compile this driver as a module, choose M here: the
 	  module will be called hisi_powerkey.
 
+config INPUT_HI6250_PMIC_POWERKEY
+	tristate "Hi6250 PMIC power key"
+	depends on ARCH_HISI || COMPILE_TEST
+	depends on OF
+	select MFD_SYSCON
+	help
+	  Say Y to support the power key of the PMIC behind the Hi6250
+	  (Kirin 659) PMU control window, as on the Huawei MediaPad M5 lite 10.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called hi6250-pmic-powerkey.
+
 config INPUT_QNAP_MCU
 	tristate "Input Support for QNAP MCU controllers"
 	depends on MFD_QNAP_MCU
