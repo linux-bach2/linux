@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * bach2 eMMC, stage 1 (read-only bring-up). Appended to hi6250-huawei-bach2.dts by
+ * build-on-tablet.sh only when BACH2_EMMC=1; needs patches/emmc/0020 (clock IDs) and 0021
+ * (driver). Kept in its own file so the SDIO/Wi-Fi DT work never conflicts with it.
+ *
+ * Source: live vendor DT (mainline/live/live.dts, sdhci@FF390000): reg 0xff390000/0x10000,
+ * interrupts <0 0x89 4>, clocks clk_emmc0 (clk_xin) + hclk_emmc0 (clk_ahb),
+ * peri-crg-rst-emmc0-bit = <16> (PERI_CRG RSTEN4 0x90), bus-width 8, drv-strength <4 4>,
+ * non-removable. Vendor vmmc-supply (PMU ldo15) is deliberately not described: the
+ * bootloader leaves it on and the vendor host never switches it.
+ * The vendor caps (HS400, CMDQ, BKOPS auto, cache-ctrl) are not carried over.
+ */
+
+/ {
+	aliases {
+		/* mmc core index -> mmcblk0, as on the vendor kernel (partition numbers match recon) */
+		mmc0 = &emmc;
+	};
+
+	soc {
+		emmc: mmc@ff390000 {
+			compatible = "hisilicon,hi6250-sdhci";
+			reg = <0x0 0xff390000 0x0 0x10000>;
+			interrupts = <GIC_SPI 137 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&crg_ctrl HI6250_CLK_EMMC0>, <&crg_ctrl HI6250_HCLK_EMMC0>;
+			clock-names = "clk_xin", "clk_ahb";
+			resets = <&crg_rst 0x90 16>;
+			bus-width = <8>;
+			max-frequency = <52000000>;
+			cap-mmc-highspeed;
+			non-removable;
+			no-sd;
+			no-sdio;
+			no-1-8-v;
+			hisilicon,drv-strength = <4 4>;
+			/* stage 1: PIO only, one variable less; ADMA32 is the next single change */
+			hisilicon,no-dma;
+			status = "okay";
+		};
+	};
+};

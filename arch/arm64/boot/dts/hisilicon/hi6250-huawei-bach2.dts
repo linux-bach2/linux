@@ -745,3 +745,4 @@
 		pinctrl-single,pins = <0x18 1 0x1c 1>;
 	};
 };
+#include "hi6250-huawei-bach2-emmc.dtsi"
