@@ -387,16 +387,20 @@ static void hi6523_p2_start(struct hi6523 *c, unsigned int s0)
 		schedule_delayed_work(&c->start, 60 * HZ);
 		return;
 	}
-	if (mv < P2_VMIN_MV || mv > P2_OVP_MV) {
-		dev_info_ratelimited(c->dev, "managed: battery %d mV outside %d..%d mV: not yet; rechecking every 60 s\n",
-				     mv, P2_VMIN_MV, P2_OVP_MV);
+	if (mv < P2_VMIN_MV || mv > 4400) {
+		dev_info_ratelimited(c->dev, "managed: battery %d mV outside %d..4400 mV: not yet; rechecking every 60 s\n",
+				     mv, P2_VMIN_MV);
 		schedule_delayed_work(&c->start, 60 * HZ);
 		return;
 	}
+	/* Full battery (e.g. after a stock boot): configure everything but keep chg_en = 0 (the OVP-held state);
+	 * the loop enables charging only once the battery is below 4000 mV. */
+	if (mv > P2_OVP_MV)
+		c->ovp = true;
 	of_property_read_u32(c->dev->of_node, "hisilicon,input-current-limit-microamp", &ua);
 	p2_fields[5].val = (ua >= 2000000 ? P2_IIN_2000 : P2_IIN_1000) << 2;
 	INIT_DELAYED_WORK(&c->work, hi6523_p2_work);
-	ret = hi6523_p2_apply(c, true);
+	ret = hi6523_p2_apply(c, !c->ovp);
 	if (ret) {
 		dev_err(c->dev, "managed: apply failed (%d): charging off, not managing\n", ret);
 		return;
@@ -404,7 +408,7 @@ static void hi6523_p2_start(struct hi6523 *c, unsigned int s0)
 	c->managed = true;
 	if (devm_add_action_or_reset(c->dev, hi6523_p2_stop, c))
 		return;
-	hi6523_p2_log(c, "readback ok");
+	hi6523_p2_log(c, c->ovp ? "readback ok, battery full: chg_en held 0" : "readback ok");
 	schedule_delayed_work(&c->work, P2_PERIOD);
 }
 
