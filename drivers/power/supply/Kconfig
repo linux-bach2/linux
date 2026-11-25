@@ -808,6 +808,26 @@ config CHARGER_BQ25890
 	help
 	  Say Y to enable support for the TI BQ25890 battery charger.
 
+config CHARGER_HI6523
+	tristate "HiSilicon Hi6523 charger status (read-only)"
+	depends on I2C
+	depends on ARCH_HISI || COMPILE_TEST
+	select REGMAP_I2C
+	help
+	  Say Y to report the state of the HiSilicon Hi6523 (SchargerV300)
+	  charger, as on the Huawei MediaPad M5 lite 10. The driver never
+	  writes the chip: it does not manage charging or kick its watchdog.
+
+config BATTERY_HI6555V100
+	tristate "HiSilicon HI6555V100 coulomb counter battery monitor (read-only)"
+	depends on ARCH_HISI || COMPILE_TEST
+	depends on OF
+	select MFD_SYSCON
+	help
+	  Say Y to report battery voltage, current and an estimated capacity
+	  (OCV table plus coulomb counting) from the HI6555V100 coulomb
+	  counter in the Hi6250 PMIC. Read-only: the counter is never written.
+
 config CHARGER_BQ25980
 	tristate "TI BQ25980 battery charger driver"
 	depends on I2C
