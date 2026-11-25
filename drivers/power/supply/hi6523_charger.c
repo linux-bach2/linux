@@ -378,12 +378,19 @@ static void hi6523_p2_start(struct hi6523 *c, unsigned int s0)
 		return;
 	}
 
+	/*
+	 * Preconditions not met (no VBUS, or the battery outside 3300..4150 mV, e.g. still full from a stock boot):
+	 * don't write anything now, but check again every 60 s, so managed charging starts once it is needed.
+	 */
 	if (!(s0 & STATUS0_BUCK_OK)) {
-		dev_info(c->dev, "managed: no VBUS (STATUS0 0x%02x): not managing\n", s0);
+		dev_info_ratelimited(c->dev, "managed: no VBUS (STATUS0 0x%02x): not yet; rechecking every 60 s\n", s0);
+		schedule_delayed_work(&c->start, 60 * HZ);
 		return;
 	}
 	if (mv < P2_VMIN_MV || mv > P2_OVP_MV) {
-		dev_warn(c->dev, "managed: battery %d mV outside %d..%d mV: not managing\n", mv, P2_VMIN_MV, P2_OVP_MV);
+		dev_info_ratelimited(c->dev, "managed: battery %d mV outside %d..%d mV: not yet; rechecking every 60 s\n",
+				     mv, P2_VMIN_MV, P2_OVP_MV);
+		schedule_delayed_work(&c->start, 60 * HZ);
 		return;
 	}
 	of_property_read_u32(c->dev->of_node, "hisilicon,input-current-limit-microamp", &ua);
