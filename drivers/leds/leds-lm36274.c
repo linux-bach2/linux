@@ -51,8 +51,9 @@ static int lm36274_brightness_set(struct led_classdev *led_cdev,
 
 static int lm36274_init(struct lm36274 *chip)
 {
+	unsigned int old;
 	int enable_val = 0;
-	int i;
+	int i, ret;
 
 	for (i = 0; i < chip->num_leds; i++)
 		enable_val |= (1 << chip->led_sources[i]);
@@ -64,7 +65,37 @@ static int lm36274_init(struct lm36274 *chip)
 
 	enable_val |= LM36274_BL_EN;
 
+	/* Keep a backlight the bootloader already enabled untouched when it matches. */
+	ret = regmap_read(chip->regmap, LM36274_REG_BL_EN, &old);
+	if (ret)
+		return ret;
+	if (old == enable_val)
+		return 0;
+	dev_info(chip->dev, "BL_EN 0x%02x -> 0x%02x\n", old, enable_val);
 	return regmap_write(chip->regmap, LM36274_REG_BL_EN, enable_val);
+}
+
+/*
+ * Report the brightness left by the bootloader instead of 0, so led_bl starts from the real level.
+ * Read-only: nothing here changes the chip.
+ */
+static int lm36274_read_boot_state(struct lm36274 *chip)
+{
+	unsigned int rev, cfg1, cfg2, lsb, msb, en;
+	int ret;
+
+	ret = regmap_read(chip->regmap, LM36274_REG_REV, &rev) ?:
+	      regmap_read(chip->regmap, LM36274_REG_BL_CFG_1, &cfg1) ?:
+	      regmap_read(chip->regmap, LM36274_REG_BL_CFG_2, &cfg2) ?:
+	      regmap_read(chip->regmap, LM36274_REG_BRT_LSB, &lsb) ?:
+	      regmap_read(chip->regmap, LM36274_REG_BRT_MSB, &msb) ?:
+	      regmap_read(chip->regmap, LM36274_REG_BL_EN, &en);
+	if (ret)
+		return ret;
+	chip->led_dev.brightness = (msb << 3) | (lsb & 0x07);
+	dev_info(chip->dev, "boot state: rev=0x%02x cfg=0x%02x,0x%02x brt=%u (lsb=0x%02x msb=0x%02x) bl_en=0x%02x\n",
+		 rev, cfg1, cfg2, chip->led_dev.brightness, lsb, msb, en);
+	return 0;
 }
 
 static int lm36274_parse_dt(struct lm36274 *chip,
@@ -123,6 +154,13 @@ static int lm36274_probe(struct platform_device *pdev)
 	ret = lm36274_parse_dt(chip, &init_data);
 	if (ret) {
 		dev_err(chip->dev, "Failed to parse DT node\n");
+		return ret;
+	}
+
+	ret = lm36274_read_boot_state(chip);
+	if (ret) {
+		fwnode_handle_put(init_data.fwnode);
+		dev_err(chip->dev, "Failed to read the device: %d\n", ret);
 		return ret;
 	}
 
