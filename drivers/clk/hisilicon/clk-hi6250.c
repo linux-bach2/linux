@@ -392,7 +392,8 @@ static const struct hisi_gate_clock hi6250_crgctrl_gate_sep_clks[] = {
 //   { HI6250_CLK_UART2, "clk_uart2", "clkmux_uartl", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x20, 12, 0, },
 //   { HI6250_CLK_UART5, "clk_uart5", "clkmux_uartl", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x20, 15, 0, },
 //   { HI6250_CLK_I2C3, "clk_i2c3", "clkmux_i2c", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x20, 7, 0, },
-//   { HI6250_CLK_I2C4, "clk_i2c4", "clkmux_i2c", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x20, 27, 0, },
+/* Parent is the assumed fixed rate below, not the real clkmux_i2c/clkdiv_i2c chain. */
+{ HI6250_CLK_I2C4, "clk_i2c4", "clk_i2c_ref_assumed", CLK_IGNORE_UNUSED, 0x20, 27, 0, },
 //   { HI6250_CLK_SPI1, "clk_spi1", "clkmux_spi", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x20, 9, 0, },
 //   { HI6250_CLK_TIMER9_A, "clk_timer9_a", "clkmux_timer9_a", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x0, -1, 0, },
 //   { HI6250_CLK_TIMER9_B, "clk_timer9_b", "clkmux_timer9_b", CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0x0, -1, 0, },
@@ -544,6 +545,18 @@ static const struct hisi_mux_clock hi6250_crgctrl_mux_clks[] = {
   // { HI6250_CLK_RXDCFG_MUX, "clk_rxdcfg_mux", clk_rxdcfg_mux_p, ARRAY_SIZE(clk_rxdcfg_mux_p), CLK_SET_RATE_PARENT, 0xc4, 8, 1, CLK_MUX_HIWORD_MASK, },
 };
 
+/*
+ * The real I2C3/I2C4 parent is clkmux_i2c (CRG 0xac bit 13: clkin_sys or clkdiv_i2c; CRG 0xe8
+ * bits 7:4 divide clk_a53hpm_div), not modelled yet. The vendor DT asks for 120 MHz on i2c3/i2c4
+ * (clock-rate = 0x7270e00). Assume that rate for DesignWare SCL timing: if the real rate is lower
+ * (e.g. clkin_sys), SCL only gets slower than requested.
+ */
+static_assert(HI6250_CLK_I2C_REF_ASSUMED < HI6250_CRGCTRL_NR_CLKS);
+static_assert(HI6250_CLK_I2C4 < HI6250_CRGCTRL_NR_CLKS);
+static const struct hisi_fixed_rate_clock hi6250_crgctrl_fixed_rate_clks[] = {
+  { HI6250_CLK_I2C_REF_ASSUMED, "clk_i2c_ref_assumed", NULL, 0, 120000000 },
+};
+
 static void __init hi6250_clk_crg_init(struct device_node *np)
 {
 	struct hisi_clock_data *clk_data_crg;
@@ -552,6 +565,8 @@ static void __init hi6250_clk_crg_init(struct device_node *np)
 	if (!clk_data_crg)
 		return;
 
+	hisi_clk_register_fixed_rate(hi6250_crgctrl_fixed_rate_clks,
+				ARRAY_SIZE(hi6250_crgctrl_fixed_rate_clks), clk_data_crg);
 	hisi_clk_register_fixed_factor(hi6250_crgctrl_fixed_factor_clks,
 				ARRAY_SIZE(hi6250_crgctrl_fixed_factor_clks), clk_data_crg);
 	hisi_clk_register_gate(hi6250_crgctrl_gate_clks,
