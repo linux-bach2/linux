@@ -94,6 +94,7 @@
 #include <linux/integrity.h>
 #include <linux/proc_ns.h>
 #include <linux/io.h>
+extern void bach2_crumb(int n);
 #include <linux/cache.h>
 #include <linux/rodata_test.h>
 #include <linux/jump_label.h>
@@ -1068,6 +1069,7 @@ void start_kernel(void)
 	sort_main_extable();
 	trap_init();
 	mm_core_init();
+	bach2_crumb(12);
 	maple_tree_init();
 	poking_init();
 	ftrace_init();
@@ -1578,6 +1580,7 @@ static int __ref kernel_init(void *unused)
 	 * Wait until kthreadd is all set-up.
 	 */
 	wait_for_completion(&kthreadd_done);
+	bach2_crumb(13);
 
 	kernel_init_freeable();
 	/* need to finish all async __init code before freeing the memory */
@@ -1605,6 +1608,7 @@ static int __ref kernel_init(void *unused)
 	do_sysctl_args();
 
 	if (ramdisk_execute_command) {
+		bach2_crumb(14);
 		ret = run_init_process(ramdisk_execute_command);
 		if (!ret)
 			return 0;

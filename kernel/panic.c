@@ -779,10 +779,12 @@ void vpanic(const char *fmt, va_list args)
 EXPORT_SYMBOL(vpanic);
 
 /* Identical to vpanic(), except it takes variadic arguments instead of va_list */
+extern void bach2_crumb(int n);
 void panic(const char *fmt, ...)
 {
 	va_list args;
 
+	bach2_crumb(15);
 	va_start(args, fmt);
 	vpanic(fmt, args);
 	va_end(args);

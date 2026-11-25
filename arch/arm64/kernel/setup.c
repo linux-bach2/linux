@@ -278,6 +278,55 @@ u64 cpu_logical_map(unsigned int cpu)
 	return __cpu_logical_map[cpu];
 }
 
+#include <linux/io.h>
+#include <asm/early_ioremap.h>
+#define BACH2_FB	0x5d000000UL
+#define BACH2_STRIP	230400UL
+static const u32 bach2_col[16] = { 0xffffffff, 0xffff0000, 0xffffff00, 0xff00ff00,
+				   0xff00ffff, 0xff0000ff, 0xffff00ff, 0xffff8000,
+				   0xff8000ff, 0xff80ff00, 0xffff80c0, 0xff008080,
+				   0xff804000, 0xff800000, 0xff808080, 0xff404040 };
+int bach2_nline;
+void __init bach2_crumb_early(int n)
+{
+	u32 __iomem *p = early_ioremap(BACH2_FB + n * BACH2_STRIP, BACH2_STRIP);
+	size_t i;
+
+	if (!p)
+		return;
+	for (i = 0; i < BACH2_STRIP / 4; i++)
+		__raw_writel(bach2_col[n & 15], p + i);
+	wmb();
+	early_iounmap(p, BACH2_STRIP);
+}
+/* thin white line k: rows 900 + 10k .. +7 */
+void __init bach2_line(int k)
+{
+	u32 __iomem *p = early_ioremap(BACH2_FB + (900UL + 10 * k) * 4800UL, 38400);
+	size_t i;
+
+	if (!p)
+		return;
+	for (i = 0; i < 38400 / 4; i++)
+		__raw_writel(0xffffffff, p + i);
+	wmb();
+	early_iounmap(p, 38400);
+}
+static u32 __iomem *bach2_fb;
+/* Runtime stages (12+). Not __init: they run after free_initmem(). Panic (n == 15) never maps. */
+void bach2_crumb(int n)
+{
+	size_t i;
+
+	if (!bach2_fb && n != 15)
+		bach2_fb = ioremap(BACH2_FB, 16 * BACH2_STRIP);
+	if (!bach2_fb)
+		return;
+	for (i = 0; i < BACH2_STRIP / 4; i++)
+		__raw_writel(bach2_col[n & 15], bach2_fb + n * (BACH2_STRIP / 4) + i);
+	wmb();
+}
+
 void __init __no_sanitize_address setup_arch(char **cmdline_p)
 {
 	setup_initial_init_mm(_text, _etext, _edata, _end);
@@ -288,8 +337,10 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
 
 	early_fixmap_init();
 	early_ioremap_init();
+	bach2_crumb_early(2);
 
 	setup_machine_fdt(__fdt_pointer);
+	bach2_crumb_early(3);
 
 	/*
 	 * Initialise the static keys early as they may be enabled by the
@@ -297,6 +348,7 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
 	 */
 	jump_label_init();
 	parse_early_param();
+	bach2_crumb_early(4);
 
 	dynamic_scs_init();
 
@@ -312,6 +364,7 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
 	 * detected and initialized.
 	 */
 	local_daif_restore(DAIF_PROCCTX_NOIRQ);
+	bach2_crumb_early(5);
 
 	/*
 	 * TTBR0 is only used for the identity mapping at this stage. Make it
@@ -321,6 +374,7 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
 
 	xen_early_init();
 	efi_init();
+	bach2_crumb_early(6);
 
 	if (!efi_enabled(EFI_BOOT)) {
 		if ((u64)_text % MIN_KIMG_ALIGN)
@@ -330,8 +384,10 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
 	}
 
 	arm64_memblock_init();
+	bach2_crumb_early(7);
 
 	paging_init();
+	bach2_crumb_early(11);
 
 	acpi_table_upgrade();
 

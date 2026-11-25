@@ -83,6 +83,20 @@
 	 *  x21        primary_entry() .. start_kernel()        FDT pointer passed at boot in x0
 	 */
 SYM_CODE_START(primary_entry)
+	/* BACH2 crumb 1 (red): MMU off, physical stores; scratch x9-x11 only, x0-x3 untouched */
+	mov_q	x9, 0x5d038400
+	mov_q	x10, 57600
+	mov_q	x11, 0xffff0000
+8:	str	w11, [x9], #4
+	subs	x10, x10, #1
+	b.ne	8b
+	mov_q	x9, 0x5d038400
+	mov_q	x10, 0x5d038400 + 230400
+9:	dc	cvac, x9
+	add	x9, x9, #64
+	cmp	x9, x10
+	b.lo	9b
+	dsb	sy
 	bl	record_mmu_state
 	bl	preserve_boot_args
 

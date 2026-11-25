@@ -1114,6 +1114,9 @@ static inline void arm64_kfence_map_pool(phys_addr_t kfence_pool, pgd_t *pgdp) {
 
 #endif /* CONFIG_KFENCE */
 
+extern void bach2_crumb_early(int n);
+extern void bach2_line(int k);
+extern int bach2_nline;
 static void __init map_mem(pgd_t *pgdp)
 {
 	static const u64 direct_map_end = _PAGE_END(VA_BITS_MIN);
@@ -1138,6 +1141,7 @@ static void __init map_mem(pgd_t *pgdp)
 		     pgd_index(_PAGE_OFFSET(VA_BITS_MIN)) != PTRS_PER_PGD - 1);
 
 	early_kfence_pool = arm64_kfence_alloc_pool();
+	bach2_crumb_early(8);
 
 	linear_map_requires_bbml2 = !force_pte_mapping() && can_set_direct_map();
 
@@ -1163,6 +1167,7 @@ static void __init map_mem(pgd_t *pgdp)
 		 */
 		__map_memblock(pgdp, start, end, pgprot_tagged(PAGE_KERNEL),
 			       flags);
+		bach2_line(bach2_nline++);
 	}
 
 	/*
@@ -1178,6 +1183,7 @@ static void __init map_mem(pgd_t *pgdp)
 	__map_memblock(pgdp, kernel_start, kernel_end,
 		       PAGE_KERNEL, NO_CONT_MAPPINGS);
 	memblock_clear_nomap(kernel_start, kernel_end - kernel_start);
+	bach2_line(bach2_nline++);
 	arm64_kfence_map_pool(early_kfence_pool, pgdp);
 }
 
@@ -1401,10 +1407,12 @@ static void __init create_idmap(void)
 void __init paging_init(void)
 {
 	map_mem(swapper_pg_dir);
+	bach2_crumb_early(9);
 
 	memblock_allow_resize();
 
 	create_idmap();
+	bach2_crumb_early(10);
 	declare_kernel_vmas();
 }
 
