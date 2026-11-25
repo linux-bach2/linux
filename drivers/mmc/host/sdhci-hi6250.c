@@ -155,6 +155,23 @@ static void hi6250_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	else if (mrq->stop && mrq->stop->opcode != MMC_STOP_TRANSMISSION)
 		bad = mrq->stop;
 
+	/*
+	 * CMD5 SLEEP_AWAKE (mmc_sleep() at system suspend, the awake half on resume) stays blocked from reaching
+	 * the card, but completes as a success. Failing it with -EROFS aborts every s2idle (mmc_bus_suspend
+	 * returns -30). The card is never put to sleep: it stays awake and powered (no vmmc-supply is described),
+	 * and resume re-initialises it with commands that are allowed anyway. Nothing extra reaches the card.
+	 */
+	if (bad && bad == mrq->cmd && mrq->cmd->opcode == MMC_SLEEP_AWAKE &&
+	    !mrq->sbc && !mrq->data && !mrq->stop) {
+		dev_info_ratelimited(mmc_dev(mmc),
+				     "CMD5 arg=0x%08x not sent; completed as success (read-only eMMC host keeps the card awake)\n",
+				     mrq->cmd->arg);
+		mrq->cmd->error = 0;
+		memset(mrq->cmd->resp, 0, sizeof(mrq->cmd->resp));
+		mmc_request_done(mmc, mrq);
+		return;
+	}
+
 	if (bad) {
 		dev_err_ratelimited(mmc_dev(mmc),
 				    "BLOCKED CMD%u arg=0x%08x%s (read-only eMMC host)\n",
