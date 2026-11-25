@@ -13,6 +13,17 @@
 	compatible = "huawei,bach2", "hisilicon,hi6250";
 	chassis-type = "tablet";
 
+	/*
+	 * Audio experiment E2 (proposed 0050, docs/mainline-audio.md section 6): the LPM3 mailbox
+	 * channel for the ASP power request. Stock mailbox-14 of ipc@e896b000: src_bit 1 (AP),
+	 * des_bit 3 (LPM3), the same IPC and unlock key as stub_clock's mailbox 13 (<13 3 0>).
+	 * Nothing binds to it unless hi6402_e2.ko is loaded, and that module sends nothing by default.
+	 */
+	audio-e2 {
+		compatible = "bach2,audio-e2";
+		mboxes = <&mailbox 14 3 1>;
+	};
+
 	aliases {
 		/* dw_mmc-k3 uses mshc, independently of the MMC core's mmc alias. */
 		mshc2 = &dwmmc2;
