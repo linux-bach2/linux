@@ -159,6 +159,19 @@
 			clock-names = "pclk_gpio11", "apb_pclk";
 		};
 
+		/* AO GPIO block 4 (stock: gpio@fff0f000, gpio-ranges pmx1 28..35). */
+		gpio26: gpio@fff0f000 {
+			compatible = "arm,pl061", "arm,primecell";
+			reg = <0 0xfff0f000 0 0x1000>;
+			interrupts = <GIC_SPI 110 IRQ_TYPE_LEVEL_HIGH>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+			clocks = <&sys_ctrl HI6250_PCLK_AO_GPIO4>, <&ao_ctrl HI6250_APB_PCLK>;
+			clock-names = "pclk_ao_gpio4", "apb_pclk";
+		};
+
 		dwmmc2: mmc@ff37d000 {
 			compatible = "hisilicon,hi6250-dw-mshc";
 			reg = <0 0xff37d000 0 0x1000>;
@@ -181,7 +194,21 @@
 			no-1-8-v;
 			cap-sdio-irq;
 			keep-power-in-suspend;
+			#address-cells = <1>;
+			#size-cells = <0>;
 			status = "okay";
+
+			/*
+			 * SDIO function 1 of Hi1102 (0296:5347). Read by the vendor
+			 * plat.ko board layer (platform/board/board.c), not bound as a
+			 * device. Stock: hisi_wifi { hi1102,gpio_wlan_wakeup_host =
+			 * <&gpio@fff0f000 5 0>; }, rising-edge device->host wake/data IRQ.
+			 */
+			wifi@1 {
+				compatible = "hisilicon,hi1102-wifi";
+				reg = <1>;
+				wlan-wakeup-host-gpios = <&gpio26 5 GPIO_ACTIVE_HIGH>;
+			};
 		};
 
 		pmic: pmic@fff34000 {
