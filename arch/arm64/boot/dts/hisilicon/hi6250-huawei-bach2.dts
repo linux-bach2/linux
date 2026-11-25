@@ -30,6 +30,42 @@
 		mmc2 = &dwmmc2;
 	};
 
+	/*
+	 * Audio (proposed 0051, docs/mainline-audio.md section 7). Inert unless bach2_asp.ko and
+	 * hi6402_slimbus.ko are loaded. bach2_asp: the stock "asp" power regulator (LPM3 mailbox 14
+	 * {0x50001}/{0x50101}) and the clocks clk_pmuaudioclk (PMIC 0x114 bit 0) and clk_asp_subsys
+	 * (LPM3 {0xd0002, 0xb}). Stock DT: asp regulator hi3xxx@15, clk_asp_subsys interactive-clk.
+	 */
+	asp_power: asp-power {
+		compatible = "bach2,asp";
+		mboxes = <&mailbox 14 3 1>;
+		#clock-cells = <1>;
+	};
+
+	/*
+	 * Stock slimbusmisc@0xe8050000 (vendor drivers/hisi/slimbus, Cadence CSMI manager; the SoC is
+	 * the framer). reg: manager, ASP_CFG, SCTRL (power/clock state words at 0x6c/0x16c).
+	 */
+	slimbus@e8050000 {
+		compatible = "candance,slimbus";
+		reg = <0x0 0xe8050000 0x0 0xb00>,
+		      <0x0 0xe804e000 0x0 0xa000>,
+		      <0x0 0xfff0a000 0x0 0x1000>;
+		interrupts = <GIC_SPI 150 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "asp_irq_slimbus";
+		clocks = <&asp_power 0>, <&asp_power 1>;
+		clock-names = "clk_pmuaudioclk", "clk_asp_subsys";
+		slimbus-reg-supply = <&asp_power>;
+		pinctrl-names = "default", "idle";
+		pinctrl-0 = <&slimbus_pins>;
+		pinctrl-1 = <&slimbus_pins>;
+		platform-type = "ASIC";
+		slimbus-ssi-sel = "slimbus";
+		asp_power_state_offset = <0x6c>;
+		asp_clk_state_offset = <0x16c>;
+		hi6402-soundtrigger-if1-used;
+	};
+
 	wifi_pwrseq: wifi-pwrseq {
 		compatible = "hisilicon,hi1102-pwrseq";
 		clocks = <&pmu_ctrl HI6250_CLK_PMU32KB>;
@@ -460,6 +496,14 @@
 /* status = "disabled" in the live DT of this wifi-only board (BAH2-W19): not reserved there */
 &kerneldump { status = "disabled"; };
 &tui_mem { status = "disabled"; };
+
+&pmx1 {
+	/* Stock gpio189/gpio190_pmx_func (pmx1 0x02c/0x030): function 2 = SLIMbus clock/data */
+	slimbus_pins: slimbus-pins {
+		pinctrl-single,pins = <0x2c 2 0x30 2>;
+	};
+};
+
 &ivp { status = "disabled"; };
 &modem_s { status = "disabled"; };
 &modem_share_mem { status = "disabled"; };
