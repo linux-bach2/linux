@@ -486,7 +486,7 @@ static const struct hi6250_divider_clock hi6250_crgctrl_divider_clks[] = {
 static const char *clk_sysbus_mux_p[] = { "clk_ppll1", "clk_ppll0" };
 static const char *clk_sd_muxsys_p[] = { "clk_factor_mmc0", "clk_mmc1_div" };
 static const char *clk_sd_muxpll_p[] = { "clk_ppll0", "clk_ppll1", "clk_ppll3", "clk_ppll3" };
-// static const char *clk_wd0_mux_p[] = { "clkin_ref", "pclk_wd0_high" };
+static const char *clk_wd0_mux_p[] = { "clkin_ref", "pclk_wd0_high" };
 // static const char *clk_vivobus_mux_p[] = { "clk_ap_ppll0", "clk_ppll1", "clk_ap_ppll2", "clk_ap_ppll3" };
 // static const char *clk_vcodecbus_mux_p[] = { "clk_ap_ppll0", "clk_ppll1", "clk_ap_ppll2", "clk_ap_ppll3" };
 // static const char *clk_mmc0_muxsys_p[] = { "clk_factor_mmc0", "clk_mmc0_div" };
@@ -520,7 +520,8 @@ static const struct hisi_mux_clock hi6250_crgctrl_mux_clks[] = {
   { HI6250_CLK_SYSBUS_MUX, "clk_sysbus_mux", clk_sysbus_mux_p, ARRAY_SIZE(clk_sysbus_mux_p), CLK_SET_RATE_PARENT, 0xac, 0, 1, CLK_MUX_HIWORD_MASK, },
   { HI6250_CLK_SD_MUXSYS, "clk_sd_muxsys", clk_sd_muxsys_p, ARRAY_SIZE(clk_sd_muxsys_p), CLK_SET_RATE_PARENT, 0xb8, 6, 1, CLK_MUX_HIWORD_MASK, },
   { HI6250_CLK_SD_MUXPLL, "clk_sd_muxpll", clk_sd_muxpll_p, ARRAY_SIZE(clk_sd_muxpll_p), CLK_SET_RATE_PARENT, 0xb8, 4, 2, CLK_MUX_HIWORD_MASK, },
-  // { HI6250_CLK_WD0_MUX, "clk_wd0_mux", clk_wd0_mux_p, ARRAY_SIZE(clk_wd0_mux_p), CLK_SET_RATE_PARENT, 0x140, 17, 1, 0, },
+  /* No CLK_SET_RATE_PARENT: a rate request on the watchdog must not reprogram pclk_wd0_high. */
+  { HI6250_CRG_CLK_WD0_MUX, "clk_wd0_mux", clk_wd0_mux_p, ARRAY_SIZE(clk_wd0_mux_p), 0, 0x140, 17, 1, 0, },
   // { HI6250_CLK_VIVOBUS_MUX, "clk_vivobus_mux", clk_vivobus_mux_p, ARRAY_SIZE(clk_vivobus_mux_p), CLK_SET_RATE_PARENT, 0xd0, 12, 2, CLK_MUX_HIWORD_MASK, },
   // { HI6250_CLK_VCODECBUS_MUX, "clk_vcodecbus_mux", clk_vcodecbus_mux_p, ARRAY_SIZE(clk_vcodecbus_mux_p), CLK_SET_RATE_PARENT, 0xd0, 5, 2, CLK_MUX_HIWORD_MASK, },
   // { HI6250_CLK_MMC0_MUXSYS, "clk_mmc0_muxsys", clk_mmc0_muxsys_p, ARRAY_SIZE(clk_mmc0_muxsys_p), CLK_SET_RATE_PARENT, 0xb4, 2, 1, CLK_MUX_HIWORD_MASK, },
@@ -559,7 +560,18 @@ static const struct hisi_mux_clock hi6250_crgctrl_mux_clks[] = {
  */
 static_assert(HI6250_CLK_I2C_REF_ASSUMED < HI6250_CRGCTRL_NR_CLKS);
 static_assert(HI6250_CLK_I2C4 < HI6250_CRGCTRL_NR_CLKS);
+/*
+ * SP805 watchdog counter clock, from the live vendor DT (crgctrl@0xfff35000):
+ *   pclk_wd0     hi3xxx-clkgate <0x00 0x00>        (no register) <- clk_wd0_mux
+ *   clk_wd0_mux  hi3xxx-clk-mux <0x140 0x20000>    (bit 17, no hiword) {clkin_ref, pclk_wd0_high}
+ *   clkin_ref    fixed-clock 0x7ffc (32764 Hz)
+ * The mux is only read at registration (no register write), so sp805_wdt computes WDTLOAD
+ * from whichever source the bootloader selected instead of assuming pclk_wd0_high.
+ */
+static_assert(HI6250_CRG_CLK_WD0_MUX < HI6250_CRGCTRL_NR_CLKS);
+static_assert(HI6250_CRG_CLKIN_REF < HI6250_CRGCTRL_NR_CLKS);
 static const struct hisi_fixed_rate_clock hi6250_crgctrl_fixed_rate_clks[] = {
+  { HI6250_CRG_CLKIN_REF, "clkin_ref", NULL, 0, 32764 },
   { HI6250_CLK_I2C_REF_ASSUMED, "clk_i2c_ref_assumed", NULL, 0, 120000000 },
 };
 

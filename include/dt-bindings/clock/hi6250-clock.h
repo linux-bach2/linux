@@ -366,6 +366,9 @@
 // #define HI6250_CLK_DIV_ISPSN 191
 // #define HI6250_CLK_SYSBUS_MUX 192
 // #define HI6250_CLK_WD0_MUX 193
+/* crgctrl watchdog block (reserved 72..75; needs HI6250_CRGCTRL_NR_CLKS >= 74) */
+#define HI6250_CRG_CLK_WD0_MUX 72
+#define HI6250_CRG_CLKIN_REF 73
 // #define HI6250_CLK_VIVOBUS_MUX 194
 // #define HI6250_CLK_VCODECBUS_MUX 195
 // #define HI6250_CLK_MMC0_MUXSYS 196
