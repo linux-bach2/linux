@@ -214,8 +214,12 @@ static struct bspp_parser_functions parser_fxns[VDEC_STD_MAX] = {
 	/* VDEC_STD_SORENSON */
 	{ .set_parser_config = NULL, .determine_unit_type = NULL },
 	/* VDEC_STD_HEVC */
+#ifdef HAS_HEVC
 	{ .set_parser_config = bspp_hevc_set_parser_config,
 		.determine_unit_type = bspp_hevc_determine_unittype },
+#else
+	{ .set_parser_config = NULL, .determine_unit_type = NULL },
+#endif
 };
 
 /*
