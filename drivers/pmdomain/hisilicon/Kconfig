@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-2.0-only
+menu "HiSilicon PM Domains"
+
+config HI6250_LPM3_PD
+	bool "HiSilicon Hi6250 LPM3 power domains"
+	depends on ARCH_HISI || COMPILE_TEST
+	depends on MAILBOX && OF
+	select PM_GENERIC_DOMAINS
+	select MFD_SYSCON
+	help
+	  Power domains of the Hi6250 (Kirin 659) that only the LPM3 power
+	  management firmware can switch, such as the Mali GPU (G3D). The
+	  driver sends the stock on/off words on LPM3 IPC mailbox 14 and
+	  reads the isolation, reset and clock state back from the CRG.
+
+	  Mailbox 14 can have only one client: this driver cannot be used
+	  together with another one that holds it.
+
+endmenu
