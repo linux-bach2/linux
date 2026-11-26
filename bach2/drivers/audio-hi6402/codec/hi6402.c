@@ -4117,7 +4117,12 @@ static void hi6402_init_chip(struct snd_soc_codec *codec)
 
 	/* under stereo smartpa , set the I2S4 port to 24bit */
 	if (priv->board_cfg.use_stereo_smartpa) {
-		snd_soc_write(codec, HI6402_S4_PORT_CFG_H, 0x70);
+		/*
+		 * bach2 A10/A11 (docs/mainline-amps.md sections 23-24) [V]: with the vendor's 0x70 (word-length code 7) the
+		 * TFA9894s' TDM sinks get zero data (LA=1 on all four amps, tone or silence). Codes 0-3 let the audio through
+		 * (LA=0 on 0x35/0x36 during a tone only, LA=1 in silence; the user heard the beeps). Code 3 (0x30) is used.
+		 */
+		snd_soc_write(codec, HI6402_S4_PORT_CFG_H, 0x30);
 	} else {
 		snd_soc_write(codec, HI6402_S4_PORT_CFG_H, 0x40);
 	}
