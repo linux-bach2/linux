@@ -516,9 +516,13 @@ static enum drm_mode_status hi6250_crtc_mode_valid(struct drm_crtc *crtc,
 
 static int hi6250_crtc_atomic_check(struct drm_crtc *crtc, struct drm_atomic_state *state)
 {
-	struct drm_crtc_state *cs = drm_atomic_get_new_crtc_state(state, crtc);
-
-	return drm_atomic_helper_check_crtc_primary_plane(cs);
+	/*
+	 * An active CRTC without a visible primary plane is valid here: the plane's disable parks D0 on the
+	 * reserved bootloader buffer, so the panel keeps a picture. Requiring the primary plane (as
+	 * drm_atomic_helper_check_crtc_primary_plane() does) made the core's remove_fb commit fail with
+	 * -EINVAL whenever a client closed with its framebuffer on screen (K1: "atomic remove_fb failed").
+	 */
+	return 0;
 }
 
 static void hi6250_crtc_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_state *state)
