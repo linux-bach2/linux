@@ -659,25 +659,6 @@
 			pinctrl-0 = <&i2c0_pins>;
 			#address-cells = <1>;
 			#size-cells = <0>;
-
-			/*
-			 * Stock sensorhub gsensor: acc1 KX023 @0x1f (WHO_AM_I 0x0f = 0x15) and acc2 LIS3DH
-			 * @0x19 (0x0f = 0x33), both "ok" [C live DT]. Stock detection: acc1 NAKs ("mcu_rw fail,
-			 * data=31", 0x1f) and the acc config read that follows runs only on DET_SUCC, so the
-			 * fitted part is the LIS3DH [I: stock log 20261123-125446 + sensor_detect.c]. The accel
-			 * stage reads WHO_AM_I of both before this node is worth a cycle.
-			 * No interrupts (gpio_int1/2 unused: sysfs raw reads poll), no supplies (sensor-io =
-			 * PMIC ldo24, enabled by the stock AP at sensorhub_io probe; left as found).
-			 * mount-matrix: vendor axis_map 0/1/2, negate 0/0/0 = chip frame is the Android frame
-			 * of the portrait-native panel [I]; confirm with the ACCEL-IIO line held upright.
-			 */
-			accelerometer@19 {
-				compatible = "st,lis3dh-accel";
-				reg = <0x19>;
-				mount-matrix = "1", "0", "0",
-					       "0", "1", "0",
-					       "0", "0", "1";
-			};
 		};
 	};
 };
