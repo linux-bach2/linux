@@ -4123,11 +4123,12 @@ static void hi6402_init_chip(struct snd_soc_codec *codec)
 		 * (LA=0 on 0x35/0x36 during a tone only, LA=1 in silence; the user heard the beeps). Code 3 (0x30) is used.
 		 */
 		/*
-		 * 2026-11-26 (touch-t4, docs/mainline-amps.md section 28): 0x30 clears bit 6 and the amps then play about
-		 * +48 dB too loud (misaligned bits: -60 dBFS was loud). Back to the vendor/idle value 0x70 (word length 3 +
-		 * bit 6, as every other port); whether the amps get data at 0x70 is untested at a safe level. Amps stay off.
+		 * bach2 (docs/mainline-amps.md sections 23-30): bit 6 of PORT_CFG_H is TX_CLK_SEL (the BCLK edge S4 drives data
+		 * on), not part of the word length (bits 4-5). With the vendor 0x70 the TFA9894s sample on the wrong edge and
+		 * get no usable data (LA=1 at -40 dBFS; nothing audible at -80 dBFS, user 2026-11-26). 0x30 (24-bit, the
+		 * other edge) feeds them correctly; the level is set by the amps' VOL attenuation (tfa98xx-bach2 atten_db).
 		 */
-		snd_soc_write(codec, HI6402_S4_PORT_CFG_H, 0x70);
+		snd_soc_write(codec, HI6402_S4_PORT_CFG_H, 0x30);
 	} else {
 		snd_soc_write(codec, HI6402_S4_PORT_CFG_H, 0x40);
 	}

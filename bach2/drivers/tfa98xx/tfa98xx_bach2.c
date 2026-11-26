@@ -42,6 +42,14 @@ MODULE_PARM_DESC(stage, "0 = read-only probe (default), 1 = A5a: patch load, amp
 static char *fw_name = "tfa98xx/BACH2-NXP_GK_GK_GK_GK.cnt";
 module_param(fw_name, charp, 0444);
 MODULE_PARM_DESC(fw_name, "container file under /lib/firmware");
+/*
+ * docs/mainline-amps.md section 30: without Android's volume attenuation the amps run at the container's full MUSIC gain
+ * (-60 dBFS was loud). atten_db is added to the vstep's VOL attenuation after every start (0.5 dB steps, VOL max
+ * 254 = -127 dB; 255 = mute). Default 30 dB; the UI's software volume sits on top.
+ */
+static int atten_db = 30;
+module_param(atten_db, int, 0444);
+MODULE_PARM_DESC(atten_db, "extra amplifier attenuation in dB on top of the container vstep (0..127, default 30)");
 
 struct tfa98xx_bach2 {
 	struct i2c_client *i2c;
@@ -364,6 +372,15 @@ static int tfa98xx_bach2_probe(struct i2c_client *i2c)
 						tfa_is_cold(tfa));
 				}
 				ret = tfa_dev_start(tfa, prof, vstep);
+				if (!ret) {
+					int v0 = tfa_get_bf(tfa, 0x5187), v = v0 + 2 * clamp(atten_db, 0, 127);	/* TFA9894N2_BF_VOL */
+
+					if (v > 254)
+						v = 254;
+					pr_info(LOGP "0x%02x A5 volume: VOL %d -> %d (+%d dB attenuation): %d, readback %d\n",
+						i2c->addr, v0, v, clamp(atten_db, 0, 127), tfa98xx_set_volume_level(tfa, v),
+						tfa_get_bf(tfa, 0x5187));
+				}
 				report(t, ret ? "A5 START-FAILED" : "A5 started");
 				pr_info(LOGP "0x%02x A5 result %d\n", i2c->addr, ret);
 				if (ret)
