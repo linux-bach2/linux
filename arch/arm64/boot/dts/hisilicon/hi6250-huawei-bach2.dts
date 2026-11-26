@@ -323,7 +323,8 @@
 	};
 
 	chosen {
-		bootargs = "console=tty0 loglevel=8 ignore_loglevel printk.time=1";
+		/* 0081: userspace governor = no cpufreq requests to LPM3 unless scaling_setspeed is written */
+		bootargs = "console=tty0 loglevel=8 ignore_loglevel printk.time=1 cpufreq.default_governor=userspace";
 
 		#address-cells = <2>;
 		#size-cells = <2>;
