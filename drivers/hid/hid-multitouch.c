@@ -38,6 +38,7 @@
 #include <linux/slab.h>
 #include <linux/input/mt.h>
 #include <linux/jiffies.h>
+#include <linux/of.h>
 #include <linux/string.h>
 #include <linux/timer.h>
 
@@ -1566,9 +1567,102 @@ static int mt_event(struct hid_device *hid, struct hid_field *field,
 	return 0;
 }
 
+/*
+ * Elan eKTH5512C (04F3:2761) in the Huawei MediaPad M5 lite 10 ("bach2"). Its firmware declares a
+ * 27-byte touch report (ID 1), but sends the 15-byte one the vendor driver (elan_ts) parses:
+ * two contacts of {status: bit 0 tip, bit 1 in range, bits 2-7 contact id; 2 unknown bytes;
+ * X, Y little-endian 16 bit} and the contact count (hybrid mode: up to five reports per frame).
+ * The pen report (ID 7) is {bit 0 in range, bit 1 tip; X, Y, pressure 16 bit}. hid-core drops
+ * every report shorter than its declaration, so nothing reached userspace. The ranges are the
+ * firmware's own (sensor (Tx - 1, Rx - 1) x 64 for fingers, x 260 for the pen), as elan_ts computes.
+ */
+#define MT_ELAN_BACH2_PRODUCT	0x2761
+
+static const __u8 mt_elan_bach2_rdesc[] = {
+	0x05, 0x0d,		/* Usage Page (Digitizers) */
+	0x09, 0x04,		/* Usage (Touch Screen) */
+	0xa1, 0x01,		/* Collection (Application) */
+	0x85, 0x01,		/*  Report ID (1) */
+#define MT_ELAN_BACH2_FINGER						\
+	0x05, 0x0d,		/*  Usage Page (Digitizers) */		\
+	0x09, 0x22,		/*  Usage (Finger) */			\
+	0xa1, 0x02,		/*  Collection (Logical) */		\
+	0x09, 0x42,		/*   Usage (Tip Switch) */		\
+	0x15, 0x00,		/*   Logical Minimum (0) */		\
+	0x25, 0x01,		/*   Logical Maximum (1) */		\
+	0x75, 0x01,		/*   Report Size (1) */			\
+	0x95, 0x01,		/*   Report Count (1) */		\
+	0x81, 0x02,		/*   Input (Data,Var,Abs) */		\
+	0x81, 0x03,		/*   Input (Cnst): in range, unused */	\
+	0x09, 0x51,		/*   Usage (Contact Identifier) */	\
+	0x25, 0x3f,		/*   Logical Maximum (63) */		\
+	0x75, 0x06,		/*   Report Size (6) */			\
+	0x81, 0x02,		/*   Input (Data,Var,Abs) */		\
+	0x75, 0x10,		/*   Report Size (16) */		\
+	0x81, 0x03,		/*   Input (Cnst): 2 unknown bytes */	\
+	0x05, 0x01,		/*   Usage Page (Generic Desktop) */	\
+	0x09, 0x30,		/*   Usage (X) */			\
+	0x26, 0x00, 0x08,	/*   Logical Maximum (2048) */		\
+	0x81, 0x02,		/*   Input (Data,Var,Abs) */		\
+	0x09, 0x31,		/*   Usage (Y) */			\
+	0x26, 0x00, 0x0d,	/*   Logical Maximum (3328) */		\
+	0x81, 0x02,		/*   Input (Data,Var,Abs) */		\
+	0xc0			/*  End Collection */
+	MT_ELAN_BACH2_FINGER,
+	MT_ELAN_BACH2_FINGER,
+#undef MT_ELAN_BACH2_FINGER
+	0x05, 0x0d,		/*  Usage Page (Digitizers) */
+	0x09, 0x54,		/*  Usage (Contact Count) */
+	0x25, 0x0a,		/*  Logical Maximum (10) */
+	0x75, 0x08,		/*  Report Size (8) */
+	0x81, 0x02,		/*  Input (Data,Var,Abs) */
+	0xc0,			/* End Collection */
+	0x05, 0x0d,		/* Usage Page (Digitizers) */
+	0x09, 0x02,		/* Usage (Pen) */
+	0xa1, 0x01,		/* Collection (Application) */
+	0x85, 0x07,		/*  Report ID (7) */
+	0x09, 0x20,		/*  Usage (Stylus) */
+	0xa1, 0x00,		/*  Collection (Physical) */
+	0x09, 0x32,		/*   Usage (In Range) */
+	0x09, 0x42,		/*   Usage (Tip Switch) */
+	0x15, 0x00,		/*   Logical Minimum (0) */
+	0x25, 0x01,		/*   Logical Maximum (1) */
+	0x75, 0x01,		/*   Report Size (1) */
+	0x95, 0x02,		/*   Report Count (2) */
+	0x81, 0x02,		/*   Input (Data,Var,Abs) */
+	0x95, 0x06,		/*   Report Count (6) */
+	0x81, 0x03,		/*   Input (Cnst) */
+	0x05, 0x01,		/*   Usage Page (Generic Desktop) */
+	0x09, 0x30,		/*   Usage (X) */
+	0x26, 0x80, 0x20,	/*   Logical Maximum (8320) */
+	0x75, 0x10,		/*   Report Size (16) */
+	0x95, 0x01,		/*   Report Count (1) */
+	0x81, 0x02,		/*   Input (Data,Var,Abs) */
+	0x09, 0x31,		/*   Usage (Y) */
+	0x26, 0xd0, 0x34,	/*   Logical Maximum (13520) */
+	0x81, 0x02,		/*   Input (Data,Var,Abs) */
+	0x05, 0x0d,		/*   Usage Page (Digitizers) */
+	0x09, 0x30,		/*   Usage (Tip Pressure) */
+	0x26, 0xff, 0x07,	/*   Logical Maximum (2047) */
+	0x81, 0x02,		/*   Input (Data,Var,Abs) */
+	0xc0,			/*  End Collection */
+	0xc0,			/* End Collection */
+};
+
 static const __u8 *mt_report_fixup(struct hid_device *hdev, __u8 *rdesc,
 			     unsigned int *size)
 {
+	if (hdev->bus == BUS_I2C && hdev->vendor == USB_VENDOR_ID_ELAN &&
+	    hdev->product == MT_ELAN_BACH2_PRODUCT &&
+	    of_machine_is_compatible("huawei,bach2")) {
+		hid_info(hdev, "bach2: replacing the %u-byte report descriptor with the elan_ts layout\n",
+			 *size);
+		print_hex_dump(KERN_DEBUG, "bach2-elan rdesc: ", DUMP_PREFIX_OFFSET, 32, 1,
+			       rdesc, *size, false);
+		*size = sizeof(mt_elan_bach2_rdesc);
+		return mt_elan_bach2_rdesc;
+	}
+
 	if (hdev->vendor == I2C_VENDOR_ID_GOODIX &&
 	    (hdev->product == I2C_DEVICE_ID_GOODIX_01E8 ||
 	     hdev->product == I2C_DEVICE_ID_GOODIX_01E9)) {
