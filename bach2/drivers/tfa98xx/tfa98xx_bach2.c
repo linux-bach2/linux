@@ -388,6 +388,36 @@ static void tfa98xx_bach2_remove(struct i2c_client *i2c)
 	cnt_put();
 }
 
+/*
+ * A8 (docs/mainline-amps.md section 21): "live" (sysfs, read-only for the chip) asks a started amp's DSP for its
+ * SpeakerBoost/framework state (FW_PARAM_GET_STATE, 9 words: agcGain limGain sMax T statusFlag X1 X2 Re shortOnMips,
+ * raw 24-bit fixed point). Excursion X1/X2 and the gains move with the signal, so tone vs silence shows whether
+ * the speaker is driven without any loudness or a mic. The DSP read is a CoolFlux message (guard window 0x90-0x9f).
+ */
+static DEFINE_MUTEX(live_lock);
+static ssize_t live_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct tfa98xx_bach2 *t = dev_get_drvdata(dev);
+	unsigned char bytes[3 * 9] = { 0 };
+	int data[9] = { 0 };
+	unsigned int n = 0;
+	int err;
+
+	if (!t || !t->started)
+		return sysfs_emit(buf, "not started\n");
+	mutex_lock(&live_lock);
+	err = tfa98xx_dsp_get_state_info(&t->tfa, bytes, &n);
+	mutex_unlock(&live_lock);
+	if (n > 9)
+		n = 9;
+	tfa98xx_convert_bytes2data(3 * n, bytes, data);
+	return sysfs_emit(buf, "err=%d n=%u agc=%d lim=%d smax=%d T=%d flag=0x%x X1=%d X2=%d Re=%d mips=%d\n", err, n,
+			  data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8]);
+}
+static DEVICE_ATTR_RO(live);
+static struct attribute *tfa98xx_bach2_attrs[] = { &dev_attr_live.attr, NULL };
+ATTRIBUTE_GROUPS(tfa98xx_bach2);
+
 static const struct of_device_id tfa98xx_bach2_of_match[] = {
 	{ .compatible = "nxp,tfa9894" },
 	{ }
@@ -398,6 +428,7 @@ static struct i2c_driver tfa98xx_bach2_driver = {
 	.driver = {
 		.name = "tfa98xx-bach2",
 		.of_match_table = tfa98xx_bach2_of_match,
+		.dev_groups = tfa98xx_bach2_groups,	/* removed before remove() runs */
 	},
 	.probe = tfa98xx_bach2_probe,
 	.remove = tfa98xx_bach2_remove,
