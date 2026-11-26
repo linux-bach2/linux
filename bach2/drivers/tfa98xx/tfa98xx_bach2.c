@@ -439,7 +439,7 @@ static ssize_t rpc_store(struct device *dev, struct device_attribute *attr, cons
 {
 	int m, p, n;
 
-	if (sscanf(buf, "%i %i %i", &m, &p, &n) != 3 || m < 0 || m > 15 || p < 0 || p > 255 || n < 1 || n > 32)
+	if (sscanf(buf, "%i %i %i", &m, &p, &n) != 3 || m < 0 || m > 15 || p < 0x80 || p > 255 || n < 1 || n > 32)	/* gets only */
 		return -EINVAL;
 	rpc_mod = m; rpc_par = p; rpc_n = n;
 	return len;
@@ -462,7 +462,25 @@ static ssize_t rpc_show(struct device *dev, struct device_attribute *attr, char 
 	return o + sysfs_emit_at(buf, o, "\n");
 }
 static DEVICE_ATTR_RW(rpc);
-static struct attribute *tfa98xx_bach2_attrs[] = { &dev_attr_live.attr, &dev_attr_rpc.attr, NULL };
+/* "status": STATUS0..3 (0x10-0x13) by plain reads. 0x12 holds CLIPS (bit 4), LP1 (bit 7: low-power, no audio) and
+ * LA (bit 8: low amplitude); 0x13 bits 0-2 are TDMSTAT. Tone vs silence shows whether audio reaches the amp (A9). */
+static ssize_t status_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct tfa98xx_bach2 *t = dev_get_drvdata(dev);
+	unsigned int v[4] = { 0 }, r;
+	int e = 0;
+
+	if (!t)
+		return -ENODEV;
+	mutex_lock(&live_lock);
+	for (r = 0; r < 4; r++)
+		e |= regmap_read(t->regmap, 0x10 + r, &v[r]);
+	mutex_unlock(&live_lock);
+	return sysfs_emit(buf, "e=%d s0=%04x s1=%04x s2=%04x s3=%04x CLIPS=%u LP1=%u LA=%u TDMSTAT=%u\n", e, v[0], v[1],
+			  v[2], v[3], (v[2] >> 4) & 1, (v[2] >> 7) & 1, (v[2] >> 8) & 1, v[3] & 7);
+}
+static DEVICE_ATTR_RO(status);
+static struct attribute *tfa98xx_bach2_attrs[] = { &dev_attr_live.attr, &dev_attr_rpc.attr, &dev_attr_status.attr, NULL };
 ATTRIBUTE_GROUPS(tfa98xx_bach2);
 
 static const struct of_device_id tfa98xx_bach2_of_match[] = {
