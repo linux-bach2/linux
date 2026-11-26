@@ -59,9 +59,13 @@ prebuilt `.ko` only if `bach2-src.sha256` equals its own copy, so change driver 
   (`docs/mainline-*.md`), with observables pre-registered before each test cycle.
 
 ## Testing on hardware (self-cycle, no host needed)
-`/root/linux-extra/selfcycle/run-cycle.sh <ci-sha> <s2-run-script>` (optionally `BUILD_ENV=BACH2_NO_WIFI=1`) waits
-for CI, fetches the tree, syncs the host repo, builds the test image with `BACH2_SELFCYCLE=1`, writes it to
-`erecovery_kernel` (p27) and reboots with `erecovery`. The image runs `mainline/initramfs/s2-run/<name>.sh` in its
+`/root/linux-extra/selfcycle/run-cycle.sh <ci-sha> <s2-run-script>` (optionally `BUILD_ENV=BACH2_NO_WIFI=1`) syncs the
+host repo, polls for CI's `hostfast-<sha>` artifact, builds the test image (`build-on-tablet.sh w11 fast`: CI's Image
+unchanged, the initramfs as an external initrd via `/chosen linux,initrd-*`; no compile or link on the tablet) with
+`BACH2_SELFCYCLE=1`, writes it to `erecovery_kernel` (p27) and reboots with `erecovery`. Start to back-in-stock is
+about 2 min. Changes only to the initramfs or s2-run scripts need no CI: reuse the last CI sha. Stage 2 ends 5 s after the
+s2-run script exits (`# S2RUN-HOLD` in the script keeps it up until the dead-man). `FAST=0` = the old relink path.
+CI's built-in initramfs is only `bach2/fallback-init` (no initrd: it logs `BACH2ML-FALLBACK-INIT` and restarts into stock). The image runs `mainline/initramfs/s2-run/<name>.sh` in its
 stage-2 rootfs and ends with a kernel restart (or a watchdog reset) into the untouched stock kernel. The boot hook
 `/etc/local.d/bach2-selfcycle.start` then saves pstore to `selfcycle/runs/<ID>/` and restores p27 from
 `/root/linux-extra/backup/`. **The session dies during a cycle**: write state to memory first. Read results from the
