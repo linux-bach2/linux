@@ -118,6 +118,8 @@ static int hi6250_poweroff_handler(
 	return NOTIFY_DONE;
 }
 
+static struct hi6250_reboot *hi6250_reboot_pending;	/* bach2: powerhold GPIO still to take */
+
 static int hi6250_reboot_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
@@ -144,11 +146,20 @@ static int hi6250_reboot_probe(struct platform_device *pdev)
 		return dev_err_probe(&pdev->dev, PTR_ERR(hi6250_reboot->sysctrl),
 				     "failed to get sysctrl regmap\n");
 
+	/*
+	 * bach2: this driver now registers at subsys_initcall, before the gpio25 controller probes. Restart and
+	 * power-off work without the powerhold GPIO (gpiod_set_value_cansleep(NULL) does nothing), so a missing
+	 * provider is not fatal here: hi6250_reboot_powerhold_late() takes the GPIO once it exists.
+	 */
 	hi6250_reboot->powerhold_gpio = devm_gpiod_get_optional(&pdev->dev, "hisilicon,powerhold",
 							GPIOD_OUT_LOW);
-	if (IS_ERR(hi6250_reboot->powerhold_gpio))
-		return dev_err_probe(&pdev->dev, PTR_ERR(hi6250_reboot->powerhold_gpio),
-				     "failed to get powerhold gpio\n");
+	if (IS_ERR(hi6250_reboot->powerhold_gpio)) {
+		if (PTR_ERR(hi6250_reboot->powerhold_gpio) != -EPROBE_DEFER)
+			return dev_err_probe(&pdev->dev, PTR_ERR(hi6250_reboot->powerhold_gpio),
+					     "failed to get powerhold gpio\n");
+		hi6250_reboot->powerhold_gpio = NULL;
+		hi6250_reboot_pending = hi6250_reboot;
+	}
 
 	hi6250_reboot->dev = &pdev->dev;
 	hi6250_reboot_init(hi6250_reboot);
@@ -191,4 +202,31 @@ static struct platform_driver hi6250_reboot_driver = {
 		.of_match_table = hi6250_reboot_of_match,
 	},
 };
-module_platform_driver(hi6250_reboot_driver);
+/*
+ * bach2: register at subsys_initcall so the restart handler exists before ordinary (device_initcall) drivers
+ * probe. Self-cycle c36 (2026-11-26): a driver's SError panic at 0.48 s could not reboot (this driver had not
+ * probed yet and PSCI SYSTEM_RESET does nothing on this firmware), so the tablet hung until a 10 s power-key press.
+ */
+static int __init hi6250_reboot_driver_init(void)
+{
+	return platform_driver_register(&hi6250_reboot_driver);
+}
+subsys_initcall(hi6250_reboot_driver_init);
+
+static int __init hi6250_reboot_powerhold_late(void)
+{
+	struct hi6250_reboot *r = hi6250_reboot_pending;
+	struct gpio_desc *g;
+
+	if (!r)
+		return 0;
+	g = devm_gpiod_get_optional(r->dev, "hisilicon,powerhold", GPIOD_OUT_LOW);
+	if (IS_ERR(g)) {
+		dev_err(r->dev, "powerhold gpio still unavailable: %ld\n", PTR_ERR(g));
+		return 0;
+	}
+	r->powerhold_gpio = g;
+	dev_info(r->dev, "powerhold gpio taken late\n");
+	return 0;
+}
+late_initcall_sync(hi6250_reboot_powerhold_late);
