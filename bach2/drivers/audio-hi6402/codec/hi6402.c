@@ -4682,6 +4682,68 @@ static irqreturn_t hi6402_pll_unlock_handler(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
+/*
+ * bach2 A10 (docs/mainline-amps.md section 23): "bach2_reg" on the codec device. Reads any range of codec registers
+ * ("R ADDR [N]", N <= 256, then read the file); writes ("W ADDR VAL") only to the S4 port-format registers below, so
+ * no analog, gain or driver register can be touched. Used to find why the amps' TDM sink gets no audio (A9: LA=1).
+ */
+static unsigned int bach2_reg_addr = 0x7200, bach2_reg_n = 16;
+static const unsigned int bach2_reg_wl[] = {
+	0x7044,	/* S4_MODULE_CLK_REG: SRC/PGA enables */
+	0x7206,	/* S4_PORT_CFG_L: func mode, master/slave, TX/RX enable */
+	0x7207,	/* S4_PORT_CFG_H: word length, channel/LRCLK/frame mode, clock select */
+	0x7266,	/* S4_SRC_IN_MODE_CGF */
+	0x7267,	/* S4_SRC_OUT_MODE_CGF / S4_DSP_IF_SEL */
+	0x72b4,	/* S4_FS_CFG_L: port clock enable, fs */
+};
+static ssize_t bach2_reg_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	unsigned int i;
+	int o = 0;
+
+	if (!g_hi6402_codec)
+		return -ENODEV;
+	for (i = 0; i < bach2_reg_n; i++) {
+		if (i % 16 == 0)
+			o += sysfs_emit_at(buf, o, "%s%04x:", i ? "\n" : "", bach2_reg_addr + i);
+		o += sysfs_emit_at(buf, o, " %02x", snd_soc_read(g_hi6402_codec, bach2_reg_addr + i) & 0xff);
+	}
+	return o + sysfs_emit_at(buf, o, "\n");
+}
+static ssize_t bach2_reg_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len)
+{
+	unsigned int a, v, i;
+	char c;
+	int k = sscanf(buf, "%c %x %x", &c, &a, &v);
+
+	if (!g_hi6402_codec)
+		return -ENODEV;
+	if (k >= 2 && c == 'R') {
+		if (k < 3)
+			v = 16;
+		if (v < 1 || v > 256)
+			return -EINVAL;
+		bach2_reg_addr = a;
+		bach2_reg_n = v;
+		return len;
+	}
+	if (k == 3 && c == 'W' && v <= 0xff) {
+		for (i = 0; i < ARRAY_SIZE(bach2_reg_wl); i++) {
+			if (bach2_reg_wl[i] == a) {
+				unsigned int old = snd_soc_read(g_hi6402_codec, a) & 0xff;
+
+				snd_soc_write(g_hi6402_codec, a, v);
+				pr_crit("BACH2ML: AUD: bach2_reg W 0x%04x: 0x%02x -> 0x%02x (read back 0x%02x)\n", a, old, v,
+					snd_soc_read(g_hi6402_codec, a) & 0xff);
+				return len;
+			}
+		}
+		return -EPERM;
+	}
+	return -EINVAL;
+}
+static DEVICE_ATTR_RW(bach2_reg);
+
 static int hi6402_codec_probe(struct snd_soc_codec *codec)
 {
 	int ret = 0;
@@ -4695,6 +4757,8 @@ static int hi6402_codec_probe(struct snd_soc_codec *codec)
 	} else {
 		hi6402_pd->codec = codec;
 		g_hi6402_codec = codec;
+		if (device_create_file(codec->dev, &dev_attr_bach2_reg))	/* bach2 A10 */
+			dev_warn(codec->dev, "bach2_reg attribute not created\n");
 		hi6402_pd->ref_voice_clk = 0;
 		hi6402_pd->ref_audio_tx = 0;
 		hi6402_pd->ref_audio_rx = 0;
@@ -4778,6 +4842,7 @@ static int hi6402_codec_remove(struct snd_soc_codec *codec)
 	struct hi6402_platform_data *priv = snd_soc_codec_get_drvdata(codec);
 
 	WARN_ON(NULL == priv);
+	device_remove_file(codec->dev, &dev_attr_bach2_reg);	/* bach2 A10 */
 
 #ifdef CONFIG_SND_SOC_HICODEC_DEBUG
 	hicodec_debug_uninit(codec);
