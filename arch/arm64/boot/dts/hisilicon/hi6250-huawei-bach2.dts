@@ -709,6 +709,24 @@
 };
 
 /*
+ * GPU (proposed 0153, docs/mainline-gpu-display.md): the LPM3 power-domain provider and the
+ * Mali-T830 for panfrost (built in). The provider holds LPM3 mailbox 14 and lends it to bach2_asp
+ * (proposed 0154): the ASP node names it, so audio and GPU work in the same boot. hi6402_e2.ko
+ * (audio-e2, a diagnostic that requests mailbox 14 itself) cannot run its LPM3 stages with this.
+ */
+&lpm3_pd {
+	status = "okay";
+};
+
+&asp_power {
+	hisilicon,lpm3 = <&lpm3_pd>;
+};
+
+&gpu {
+	status = "okay";
+};
+
+/*
  * Speaker amplifiers: bus only (proposed 0060/0061, docs/mainline-amps.md).
  * Stock i2c@FDF0C000 (alias i2c3; i2c-1 on the vendor kernel): DesignWare, SPI 81, clock clk_i2c3
  * (CRG 0x20 bit 7), reset CRG 0x78/0x7c bit 7, vendor clock-rate 120 MHz, pins gpio009/gpio010.
