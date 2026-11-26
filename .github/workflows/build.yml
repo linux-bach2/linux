@@ -40,18 +40,37 @@ jobs:
             hl-tree-${{ env.DEFCONFIG }}-${{ github.ref_name }}-
             hl-tree-${{ env.DEFCONFIG }}-
 
+      # Out-of-tree module objects (bach2/): kept so a commit rebuilds only what changed (vermagic changes
+      # every commit, so at least modpost and the final links run).
+      - name: Restore out-of-tree module cache
+        id: extcache
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/hl/out
+          key: hl-ext-${{ env.DEFCONFIG }}-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            hl-ext-${{ env.DEFCONFIG }}-${{ github.ref_name }}-
+            hl-ext-${{ env.DEFCONFIG }}-
+
       - name: Build in Alpine 3.21 (tablet paths and toolchain)
         run: |
           mkdir -p "$HL"
           cat > "$HL/ci-build.sh" <<'EOF'
           set -eu
           set -o pipefail
+          T0=$(date +%s); rm -f /root/linux-extra/build/phases.log
+          ts() { echo "@@ +$(( $(date +%s) - T0 ))s $*" | tee -a /root/linux-extra/build/phases.log; }
           # Same package set as the tablet (its setup.sh list, plus bash and GNU tar, both installed there).
           apk add -q git build-base bc flex bison openssl-dev perl linux-headers elfutils-dev dtc python3 xz zstd cpio bash tar
           B=/root/linux-extra/build; K=$B/linux-hi6250
           # The runner user saves the cache: keep the tree readable even if the build fails.
-          trap 'chmod -R a+rX $K 2>/dev/null || true' EXIT
+          trap 'chmod -R a+rX $K $B/out 2>/dev/null || true' EXIT
           git config --global --add safe.directory '*'
+          # The cache restore changes every file's inode/ctime: compare only mtime + size (tar keeps both),
+          # or `update-index --refresh` re-hashes all ~90k files (once took 6.6 min).
+          git config --global core.checkStat minimal
+          git config --global core.trustctime false
+          ts "apk done"
           if [ -d $K/.git ]; then
             echo "tree cache: $(git -C $K rev-parse --short=12 HEAD) -> ${SHA:0:12}"
             git -C $K fetch -q --depth=1 origin "$SHA"
@@ -59,6 +78,7 @@ jobs:
             # checkout rewrites (and re-timestamps) every file and make rebuilds everything.
             git -C $K update-index -q --refresh || true
             git -C $K checkout -q -f "$SHA"
+            ts "checkout done"
             echo "files changed by the checkout: $(find $K -path $K/.git -prune -o -type f -newer $K/.config -print | grep -vcE '\.(o|cmd|a|ko|mod|order|symvers)$' || true)"
           else
             echo "tree cache: none (full build)"
@@ -68,27 +88,42 @@ jobs:
             git -C $K checkout -q -f FETCH_HEAD
           fi
           cd $K
-          # Placeholder initramfs list at the path the tablet uses; the tablet regenerates it.
-          [ -f $B/initramfs.list ] || echo 'dir /dev 0755 0 0' > $B/initramfs.list
+          # Built-in initramfs = only the fallback /init (bach2/fallback-init): test images bring their real
+          # initramfs as an external initrd that replaces it; without one, the fallback logs and restarts
+          # into stock. Same list path as the tablet's (the tablet's relink path overwrites the list).
+          mkdir -p $B/out; gcc -static -Os -s -Wall -o $B/out/fallback-init.new bach2/fallback-init/init.c   # kept if unchanged (mtime)
+          cmp -s $B/out/fallback-init.new $B/out/fallback-init && rm $B/out/fallback-init.new || mv $B/out/fallback-init.new $B/out/fallback-init
+          printf '%s\n' 'dir /dev 0755 0 0' 'nod /dev/console 0600 0 0 c 5 1' 'nod /dev/kmsg 0644 0 0 c 1 11' \
+            'dir /proc 0555 0 0' 'dir /sys 0555 0 0' "file /init $B/out/fallback-init 0755 0 0" > $B/initramfs.list.new
+          cmp -s $B/initramfs.list.new $B/initramfs.list || mv $B/initramfs.list.new $B/initramfs.list
           [ -f .config ] && cp -p .config /tmp/old.config || true
           make -s $DEFCONFIG
           scripts/config --set-str INITRAMFS_SOURCE "$B/initramfs.list"
           make -s olddefconfig
           if [ -f /tmp/old.config ] && cmp -s /tmp/old.config .config; then touch -r /tmp/old.config .config; fi
+          ts "make start"
           make -j$(nproc) Image dtbs modules 2>&1 | tee $B/build.log
           # End exactly like the tablet's pass 1 (Image + DTB, no modules): modpost then writes
           # vmlinux.symvers, which the tablet's module builds use.
           make -j$(nproc) Image dtbs 2>&1 | tee -a $B/build.log
           [ -s vmlinux.symvers ] || { echo "no vmlinux.symvers after the Image build"; exit 1; }
+          ts "kernel done"
           # Out-of-tree bach2 modules (bach2/: Hi1102 Wi-Fi, HI6402 audio, TFA9894 amps), built exactly as the
           # tablet's build-on-tablet.sh does: against vmlinux.symvers, with the same OUT paths and stage order.
           cp vmlinux.symvers Module.symvers
-          for x in hisi110x audio-hi6402 tfa98xx; do rm -rf $B/out/$x; done
-          KDIR=$K OUT=$B/out/hisi110x JOBS=$(nproc) bash bach2/build-hisi110x.sh all > $B/ext-hisi110x.log 2>&1 || { tail -n 40 $B/ext-hisi110x.log; exit 1; }
-          for a in asp slimbus ver codec pcm; do
-            KDIR=$K OUT=$B/out/audio-hi6402 JOBS=$(nproc) bash bach2/build-audio-hi6402.sh $a >> $B/ext-audio.log 2>&1 || { tail -n 40 $B/ext-audio.log; exit 1; }
-          done
-          KDIR=$K OUT=$B/out/tfa98xx JOBS=$(nproc) bash bach2/build-tfa98xx.sh module > $B/ext-tfa98xx.log 2>&1 || { tail -n 40 $B/ext-tfa98xx.log; exit 1; }
+          # The three families are independent: build them in parallel, incrementally (out/ is cached; kbuild's
+          # .cmd files track sources, headers and flags). Old .ko files go first so a failed build can't ship one.
+          find $B/out -name '*.ko' -delete 2>/dev/null || true
+          rm -f $B/ext-*.log
+          KDIR=$K OUT=$B/out/hisi110x JOBS=$(nproc) bash bach2/build-hisi110x.sh all > $B/ext-hisi110x.log 2>&1 & P1=$!
+          ( for a in asp slimbus ver codec pcm; do
+            KDIR=$K OUT=$B/out/audio-hi6402 JOBS=$(nproc) bash bach2/build-audio-hi6402.sh $a >> $B/ext-audio.log 2>&1 || exit 1
+          done ) & P2=$!
+          KDIR=$K OUT=$B/out/tfa98xx JOBS=$(nproc) bash bach2/build-tfa98xx.sh module > $B/ext-tfa98xx.log 2>&1 & P3=$!
+          wait $P1 || { tail -n 40 $B/ext-hisi110x.log; exit 1; }
+          wait $P2 || { tail -n 40 $B/ext-audio.log; exit 1; }
+          wait $P3 || { tail -n 40 $B/ext-tfa98xx.log; exit 1; }
+          ts "out-of-tree modules done"
           if grep -nE 'modpost: .*undefined' $B/ext-*.log; then echo "unresolved symbols in the bach2 modules"; exit 1; fi
           (cd $B && find out -name '*.ko' | sort | xargs ls -l)
           {
@@ -115,16 +150,23 @@ jobs:
           git ls-files -z --others > /tmp/products
           # pax format keeps nanosecond mtimes: with whole seconds, a generator and its output written in
           # the same second look out of date to make on the tablet (15 objects rebuilt there).
-          tar --format=posix --pax-option=delete=atime,delete=ctime --null -T /tmp/products -cf - | zstd -q -T0 -9 > $B/hostloop/hostloop-tree.tar.zst
+          tar --format=posix --pax-option=delete=atime,delete=ctime --null -T /tmp/products -cf - | zstd -q -T0 -3 > $B/hostloop/hostloop-tree.tar.zst
           cp $B/toolchain.txt $B/hostloop/
           # bach2 out-of-tree modules: the .ko files (tablet paths), the logs, and the source manifest the tablet
           # compares with its own copy of the sources
           (cd $B && find out/hisi110x out/audio-hi6402 out/tfa98xx -name '*.ko' | sort > /tmp/kos && tar --format=posix -cf - -T /tmp/kos ext-*.log) | zstd -q -T0 -9 > $B/hostloop/modules-ext.tar.zst
           (cd bach2 && find drivers build-*.sh -type f | LC_ALL=C sort | xargs sha256sum) > $B/hostloop/bach2-src.sha256
+          # Fast host loop (no kernel tree, no relink on the tablet): CI's Image + DTB + out-of-tree modules.
+          # The tablet packs its private initramfs as an external initrd next to them.
+          rm -rf $B/hostfast; mkdir -p $B/hostfast
+          cp $B/pub/Image.gz arch/arm64/boot/dts/$DTB .config $B/toolchain.txt $B/hostloop/modules-ext.tar.zst $B/hostloop/bach2-src.sha256 $B/hostfast/
+          cp include/config/kernel.release $B/hostfast/kernel.release
+          (cd $B/hostfast && sha256sum * > SHA256SUMS)
           mkdir -p $B/pub/bach2-modules && (cd $B && xargs -a /tmp/kos cp --parents -t $B/pub/bach2-modules 2>/dev/null || while read -r f; do mkdir -p $B/pub/bach2-modules/$(dirname $f); cp $f $B/pub/bach2-modules/$f; done < /tmp/kos)
           tar -C $B/pub -czf $B/pub/bach2-modules-$KREL.tar.gz bach2-modules && rm -rf $B/pub/bach2-modules
           (cd $B/pub && sha256sum * > SHA256SUMS); (cd $B/hostloop && sha256sum * > SHA256SUMS)
-          chmod -R a+rX $B/pub $B/hostloop
+          chmod -R a+rX $B/pub $B/hostloop $B/hostfast $B/out
+          ts "artifacts packed"
           EOF
           docker run --rm -e SHA=$GITHUB_SHA -e REPO=$GITHUB_REPOSITORY -e DEFCONFIG -e DTB \
             -v "$HL:/root/linux-extra/build" "$IMAGE" sh /root/linux-extra/build/ci-build.sh
@@ -132,6 +174,31 @@ jobs:
           grep -E '(warning|error):' $HL/build.log | sort -u > $HL/warnings.log || true
           echo "### Build warnings: $(wc -l < $HL/warnings.log)" >> $GITHUB_STEP_SUMMARY
           sed 's/^/    /' $HL/toolchain.txt >> $GITHUB_STEP_SUMMARY
+          echo '### Phases' >> $GITHUB_STEP_SUMMARY; sed 's/^/    /' $HL/phases.log >> $GITHUB_STEP_SUMMARY || true
+
+      # First, so the tablet can start as soon as it exists (it polls for this artifact, not the run).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hostfast-${{ github.sha }}
+          path: /home/runner/hl/hostfast/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bach2-kernel-${{ github.sha }}
+          path: /home/runner/hl/pub/
+          if-no-files-found: error
+
+      # Built tree for the tablet's host loop (objects only, no initramfs content, nothing private).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hostloop-tree-${{ github.sha }}
+          path: /home/runner/hl/hostloop/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
 
       - name: Save tree cache
         id: save
@@ -163,22 +230,24 @@ jobs:
           OLD: ${{ steps.cache.outputs.cache-matched-key }}
         run: gh cache delete "$OLD" -R "$GITHUB_REPOSITORY" || true
 
+      - name: Save out-of-tree module cache
+        if: always() && steps.extcache.outputs.cache-matched-key != format('hl-ext-{0}-{1}-{2}', env.DEFCONFIG, github.ref_name, github.sha)
+        uses: actions/cache/save@v4
+        with:
+          path: /home/runner/hl/out
+          key: hl-ext-${{ env.DEFCONFIG }}-${{ github.ref_name }}-${{ github.sha }}
+
+      - name: Drop superseded out-of-tree module cache of this branch
+        if: always() && startsWith(steps.extcache.outputs.cache-matched-key, format('hl-ext-{0}-{1}-', env.DEFCONFIG, github.ref_name)) && steps.extcache.outputs.cache-matched-key != format('hl-ext-{0}-{1}-{2}', env.DEFCONFIG, github.ref_name, github.sha)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OLD: ${{ steps.extcache.outputs.cache-matched-key }}
+          KEY: hl-ext-${{ env.DEFCONFIG }}-${{ github.ref_name }}-${{ github.sha }}
+        run: |
+          gh cache list -R "$GITHUB_REPOSITORY" --key "$KEY" --json key | grep -q "\"$KEY\"" && gh cache delete "$OLD" -R "$GITHUB_REPOSITORY" || true
+
       - name: Summary
         run: |
           echo "kernel.release: $(cat $HL/linux-hi6250/include/config/kernel.release)" >> $GITHUB_STEP_SUMMARY
           ls -l $HL/pub $HL/hostloop >> $GITHUB_STEP_SUMMARY
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: bach2-kernel-${{ github.sha }}
-          path: /home/runner/hl/pub/
-          if-no-files-found: error
-
-      # Built tree for the tablet's host loop (objects only, no initramfs content, nothing private).
-      - uses: actions/upload-artifact@v4
-        with:
-          name: hostloop-tree-${{ github.sha }}
-          path: /home/runner/hl/hostloop/
-          compression-level: 0
-          retention-days: 7
-          if-no-files-found: error
