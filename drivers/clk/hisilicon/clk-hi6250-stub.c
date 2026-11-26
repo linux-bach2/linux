@@ -18,12 +18,19 @@
 #include <linux/mfd/syscon.h>
 #include <dt-bindings/clock/hi6250-clock.h>
 
+/*
+ * SCBAKDATA4: LPM3 publishes the current OPP index of each domain here, one nibble per domain
+ * (stock hi3xxx_xfreq_clk_get_freq_idx: bits 0-3 little, 4-7 big, 8-11 DDR, 12-15 GPU, which is
+ * nibble id * 4 with the dt-bindings ids below).
+ */
 #define HI6250_STUB_CLOCK_BASE    (0x41C)
+#define HI6250_STUB_FREQ_IDX_MASK 0xf
 
 #define DEFINE_CLK_STUB(_id, _freqs, _cmd, _name) \
 	{                                         \
 		.id = (_id),                            \
 		.freqs = (_freqs),                      \
+		.nr_freqs = ARRAY_SIZE(_freqs),         \
 		.cmd = (_cmd),                          \
 		.hw.init = &(struct clk_init_data) {    \
 			.name = #_name,                       \
@@ -43,13 +50,13 @@ struct hi6250_stub_clk_chan {
 struct hi6250_stub_clk {
 	unsigned int id;
 	struct clk_hw hw;
-	unsigned long *freqs;
+	const unsigned long *freqs;	/* Hz, index = LPM3 OPP index */
+	unsigned int nr_freqs;
 	unsigned int cmd;
 	unsigned int msg[8];
-	unsigned int rate; // mhz
 };
 
-static void __iomem *freq_reg;
+static struct regmap *sysctrl;
 static struct hi6250_stub_clk_chan stub_clk_chan;
 
 static unsigned long hi6250_stub_clk_recalc_rate(
@@ -57,11 +64,20 @@ static unsigned long hi6250_stub_clk_recalc_rate(
 	unsigned long parent_rate
 ) {
 	struct hi6250_stub_clk *stub_clk = to_stub_clk(hw);
+	unsigned int val, freq_id;
 
-	unsigned int freq_id = (readl(freq_reg) >> (stub_clk->id * 4)) & 0xf;
+	if (regmap_read(sysctrl, HI6250_STUB_CLOCK_BASE, &val))
+		return 0;
 
-	stub_clk->rate = stub_clk->freqs[freq_id];
-	return stub_clk->rate;
+	freq_id = (val >> (stub_clk->id * 4)) & HI6250_STUB_FREQ_IDX_MASK;
+	if (freq_id >= stub_clk->nr_freqs) {
+		/* 0 = unknown: cpufreq then refuses the policy instead of trusting a guess */
+		pr_warn_once("hi6250-stub-clk: %s: OPP index %u out of range (SCBAKDATA4=0x%08x)\n",
+			     clk_hw_get_name(hw), freq_id, val);
+		return 0;
+	}
+
+	return stub_clk->freqs[freq_id];
 }
 
 static int hi6250_stub_clk_determine_rate(
@@ -77,6 +93,7 @@ static int hi6250_stub_clk_set_rate(
 	unsigned long parent_rate
 ) {
 	struct hi6250_stub_clk *stub_clk = to_stub_clk(hw);
+	int ret;
 
 	stub_clk->msg[0] = stub_clk->cmd;
 	stub_clk->msg[1] = rate / 1000000;
@@ -84,10 +101,15 @@ static int hi6250_stub_clk_set_rate(
 	dev_dbg(stub_clk_chan.cl.dev, "set rate msg[0]=0x%x msg[1]=0x%x\n",
 		stub_clk->msg[0], stub_clk->msg[1]);
 
-	mbox_send_message(stub_clk_chan.mbox, stub_clk->msg);
+	/* >= 0 only means queued; a controller-side failure is logged by hi3660-mbox */
+	ret = mbox_send_message(stub_clk_chan.mbox, stub_clk->msg);
+	if (ret < 0) {
+		dev_err_ratelimited(stub_clk_chan.cl.dev, "%s: %u MHz not queued: %d\n",
+				    clk_hw_get_name(hw), stub_clk->msg[1], ret);
+		return ret;
+	}
 	mbox_client_txdone(stub_clk_chan.mbox, 0);
 
-	stub_clk->rate = rate;
 	return 0;
 }
 
@@ -97,36 +119,36 @@ static const struct clk_ops hi6250_stub_clk_ops = {
 	.set_rate       = hi6250_stub_clk_set_rate,
 };
 
-// mHz
-static unsigned long hi6250_stub_clk_freqs_cluster0[] = {
-	480000000000,
-	807000000000,
-	1306000000000,
-	1709000000000,
+/* Hz; must equal the OPP tables in hi6250.dtsi (cpufreq-dt BUG()s on an unlisted rate it cannot fix) */
+static const unsigned long hi6250_stub_clk_freqs_cluster0[] = {
+	480000000,
+	807000000,
+	1306000000,
+	1709000000,
 };
-static unsigned long hi6250_stub_clk_freqs_cluster1[] = {
-	1402000000000,
-	1805000000000,
-	2016000000000,
-	2112000000000,
-	2362000000000,
+static const unsigned long hi6250_stub_clk_freqs_cluster1[] = {
+	1402000000,
+	1805000000,
+	2016000000,
+	2112000000,
+	2362000000,
 };
-static unsigned long hi6250_stub_clk_freqs_ddr[] = {
-	120000000000,
-	240000000000,
-	360000000000,
-	533000000000,
-	800000000000,
-	933000000000,
+static const unsigned long hi6250_stub_clk_freqs_ddr[] = {
+	120000000,
+	240000000,
+	360000000,
+	533000000,
+	800000000,
+	933000000,
 };
-static unsigned long hi6250_stub_clk_freqs_gpu[] = {
-	120000000000,
-	240000000000,
-	360000000000,
-	480000000000,
-	680000000000,
-	800000000000,
-	900000000000,
+static const unsigned long hi6250_stub_clk_freqs_gpu[] = {
+	120000000,
+	240000000,
+	360000000,
+	480000000,
+	680000000,
+	800000000,
+	900000000,
 };
 
 static struct hi6250_stub_clk hi6250_stub_clks[HI6250_CLK_STUB_NUM] = {
@@ -155,7 +177,7 @@ static int hi6250_stub_clk_probe(
 ) {
 	struct device *dev = &pdev->dev;
 	struct device_node *np = pdev->dev.of_node;
-	unsigned int i;
+	unsigned int i, val;
 	int ret;
 
 	/* Use mailbox client without blocking */
@@ -169,14 +191,17 @@ static int hi6250_stub_clk_probe(
 	if (IS_ERR(stub_clk_chan.mbox))
 		return PTR_ERR(stub_clk_chan.mbox);
 
-	freq_reg = syscon_regmap_lookup_by_phandle(np,
-				"hisilicon,hi6250-sys-ctrl");
-	if (IS_ERR(freq_reg)) {
+	sysctrl = syscon_regmap_lookup_by_phandle(np, "hisilicon,hi6250-sys-ctrl");
+	if (IS_ERR(sysctrl)) {
 		dev_err(dev, "failed to get sysctrl regmap\n");
-		return PTR_ERR(freq_reg);
+		return PTR_ERR(sysctrl);
 	}
 
-	freq_reg += HI6250_STUB_CLOCK_BASE;
+	ret = regmap_read(sysctrl, HI6250_STUB_CLOCK_BASE, &val);
+	if (ret)
+		return ret;
+	dev_info(dev, "SCBAKDATA4=0x%08x (OPP index nibbles: little %u big %u ddr %u gpu %u)\n",
+		 val, val & 0xf, (val >> 4) & 0xf, (val >> 8) & 0xf, (val >> 12) & 0xf);
 
 	for (i = 0; i < HI6250_CLK_STUB_NUM; i++) {
 		ret = devm_clk_hw_register(&pdev->dev, &hi6250_stub_clks[i].hw);
