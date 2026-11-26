@@ -22,7 +22,7 @@ Kirin 659 (`hi6250`), 8x Cortex-A53, 3 GB RAM, 1200x1920 panel. It is based on t
 | Battery / charger (HI6555V100 coulomb counter, Hi6523) | battery reporting; managed charging (CV 4100 mV, 700 mA) with a hardware watchdog |
 | Audio (HI6402 codec over SLIMbus, TFA9894 amps, out-of-tree in `bach2/`) | speakers work (all four amps, stereo; use `plughw`/`default`: the PCM is non-interleaved); main mic records |
 | Deep sleep | s2idle works with Wi-Fi associated and touch kept powered (PL031 alarm or touch wake); Wi-Fi reconnects after resume |
-| Rotation (LIS3DH) | blocked: the sensor bus belongs to the IOMCU (sensorhub firmware needed) |
+| Rotation (LIS3DH) | working: the IOMCU sensorhub firmware is started at boot and its I2C relay is an i2c adapter, so `st_accel` gives IIO; the UI auto-rotates |
 
 ## Build
 CI builds every push (`.github/workflows/build.yml`) in an `alpine:3.21` container, with cached
