@@ -853,4 +853,39 @@
 		};
 	};
 };
+
+/*
+ * IOMCU sensorhub I2C relay (proposed 0140/0141, docs/mainline-sensorhub.md S3). Stock fastboot loads the
+ * IOMCU firmware (partition "sensorhub", into sensorhub_s) and leaves it waiting [V S1]. The driver writes
+ * the CONFIG_ON_DDR page (last 4 KiB of sensorhub_share_mem), sends STARTUP on IPC mailbox 10, waits for
+ * MINI ready on mailbox 4 (stock mailbox-4: SPI 201 [V live DT]; polled as well) and relays I2C transfers
+ * to the firmware's I2C0, the sensor bus [V S2: AK09918 @0x0c, LIS3DH @0x19]. The IPC block stays the
+ * hi3660-mbox node's; the driver maps only mailboxes 4/10 and the lock register.
+ */
+/ {
+	i2c-iomcu {
+		compatible = "hisilicon,hi6250-iomcu-i2c";
+		hisilicon,ipc = <&mailbox>;
+		interrupts = <GIC_SPI 201 IRQ_TYPE_LEVEL_HIGH>;
+		memory-region = <&sensorhub_share_mem>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/*
+		 * Stock sensorhub gsensor acc2 (huawei,st-lis3dh, WHO_AM_I 0x33 [V S2]). No interrupts (stock
+		 * gpio_int1/2 are IOMCU-side GPIOs; sysfs raw reads poll), no supplies (sensor-io = PMIC ldo24,
+		 * on from boot [V S2], not described). mount-matrix: stock axis_map 0/1/2, negate 0/0/0, so the
+		 * chip frame is the Android frame of the panel [I]; flat face-up reads z = +976 mg [V S2], so
+		 * z is right; the x/y signs are [I] until an upright reading confirms them. The AK09918
+		 * magnetometer @0x0c is not described.
+		 */
+		accelerometer@19 {
+			compatible = "st,lis3dh-accel";
+			reg = <0x19>;
+			mount-matrix = "1", "0", "0",
+				       "0", "1", "0",
+				       "0", "0", "1";
+		};
+	};
+};
 #include "hi6250-huawei-bach2-emmc.dtsi"
