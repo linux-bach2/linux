@@ -838,4 +838,27 @@
 		};
 	};
 };
+
+/*
+ * Display (proposed 0162, docs/mainline-kms.md): the adopt-KMS driver ("kirin", hisilicon,hi6250-dpe)
+ * takes the bootloader's running pipeline over from simplefb: page flips on RCH D0, VSYNC events, no
+ * power/clock/DSI/panel changes. Scanout buffers come from a dedicated reusable CMA pool (128 MiB =
+ * 14 frames of 1200x1920x4, < 4 GiB: the DSS reads 32-bit physical addresses). logo_buffer stays
+ * no-map: the bootloader's frame there is the parking buffer when the plane is off.
+ */
+/ {
+	reserved-memory {
+		kms_pool: kms-pool {
+			compatible = "shared-dma-pool";
+			reusable;
+			size = <0x0 0x8000000>;
+		};
+	};
+};
+
+&dpe {
+	memory-region = <&kms_pool>, <&logo_buffer>;
+	memory-region-names = "pool", "boot";
+	status = "okay";
+};
 #include "hi6250-huawei-bach2-emmc.dtsi"
