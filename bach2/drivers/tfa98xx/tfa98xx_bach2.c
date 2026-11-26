@@ -352,6 +352,17 @@ static int tfa98xx_bach2_probe(struct i2c_client *i2c)
 				tfa_dev_set_swprof(tfa, 0xff);
 				tfa_dev_set_swvstep(tfa, 0xff);
 				pr_info(LOGP "0x%02x A5 cold init: %d\n", i2c->addr, tfa98xx_init(tfa));
+				/*
+				 * I2CR does not set ACS (c22: every start after the first of a boot was a warm start that
+				 * failed with the DSP in reset). Power up as tfaRunColdStartup does, then force ACS = 1 via
+				 * CF_CONTROL, so tfa_dev_start takes the cold path (patch load, DSP start).
+				 */
+				{
+					int su = tfaRunStartup(tfa, prof), cb = su ? -1 : tfaRunColdboot(tfa, 1);
+
+					pr_info(LOGP "0x%02x A5 startup: %d, force ACS: %d, ACS=%d\n", i2c->addr, su, cb,
+						tfa_is_cold(tfa));
+				}
 				ret = tfa_dev_start(tfa, prof, vstep);
 				report(t, ret ? "A5 START-FAILED" : "A5 started");
 				pr_info(LOGP "0x%02x A5 result %d\n", i2c->addr, ret);
@@ -407,6 +418,12 @@ static ssize_t live_show(struct device *dev, struct device_attribute *attr, char
 		return sysfs_emit(buf, "not started\n");
 	mutex_lock(&live_lock);
 	err = tfa98xx_dsp_get_state_info(&t->tfa, bytes, &n);
+	if (err) {	/* c22: the framework module answered 203 (parameter id): ask SpeakerBoost, 8 words */
+		int e2 = tfa_dsp_cmd_id_write_read(&t->tfa, MODULE_SPEAKERBOOST, SB_PARAM_GET_STATE, 3 * 8, bytes);
+
+		n = 8;
+		err = err * 1000 + e2;
+	}
 	mutex_unlock(&live_lock);
 	if (n > 9)
 		n = 9;
