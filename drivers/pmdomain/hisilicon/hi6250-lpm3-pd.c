@@ -13,8 +13,13 @@
  * isolation is released, its resets are deasserted and its clocks run. A domain that does not
  * reach that state fails power-on, so a consumer never touches a dead bus.
  *
- * Mailbox 14 is exclusive (mailbox framework): no other client (bach2_asp, audio-e2) may hold it.
- * Built in only: genpd domains cannot be torn down while consumers may still be attached.
+ * Mailbox 14 is exclusive (mailbox framework): this driver holds it and lends it to the other LPM3
+ * users of that mailbox (the ASP audio power and clock votes of bach2_asp), which send their own
+ * stock words through hi6250_lpm3_send() (include/linux/soc/hisilicon/hi6250-lpm3.h) instead of
+ * requesting the channel. One mutex orders all messages; each one is handled exactly as if its
+ * sender owned the channel (same channel arguments, same send + txdone sequence).
+ * Built in only: genpd domains cannot be torn down while consumers may still be attached, and the
+ * shared channel must outlive every borrower.
  */
 #include <linux/bits.h>
 #include <linux/delay.h>
@@ -23,9 +28,11 @@
 #include <linux/mfd/syscon.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
+#include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/pm_domain.h>
 #include <linux/regmap.h>
+#include <linux/soc/hisilicon/hi6250-lpm3.h>
 
 #include <dt-bindings/power/hisilicon,hi6250-lpm3-pd.h>
 
@@ -82,7 +89,7 @@ struct hi6250_lpm3 {
 	struct genpd_onecell_data onecell;
 };
 
-static int hi6250_lpm3_send(struct hi6250_lpm3 *l, u32 *msg)
+int hi6250_lpm3_send(struct hi6250_lpm3 *l, u32 *msg)
 {
 	int ret;
 
@@ -93,6 +100,31 @@ static int hi6250_lpm3_send(struct hi6250_lpm3 *l, u32 *msg)
 	dev_dbg(l->dev, "lpm3 {0x%08x, 0x%x}: %d\n", msg[0], msg[1], ret < 0 ? ret : 0);
 	return ret < 0 ? ret : 0;
 }
+EXPORT_SYMBOL_GPL(hi6250_lpm3_send);
+
+struct hi6250_lpm3 *hi6250_lpm3_get(struct device *dev)
+{
+	struct platform_device *pdev;
+	struct device_node *np;
+	struct hi6250_lpm3 *l;
+
+	np = of_parse_phandle(dev->of_node, "hisilicon,lpm3", 0);
+	if (!np)
+		return ERR_PTR(-ENOENT);
+	if (!of_device_is_available(np)) {
+		of_node_put(np);
+		return ERR_PTR(-ENODEV);
+	}
+	pdev = of_find_device_by_node(np);
+	of_node_put(np);
+	if (!pdev)
+		return ERR_PTR(-EPROBE_DEFER);
+	/* Set only after a complete probe; the provider never unbinds (built in, no bind attrs). */
+	l = platform_get_drvdata(pdev);
+	put_device(&pdev->dev);
+	return l ? l : ERR_PTR(-EPROBE_DEFER);
+}
+EXPORT_SYMBOL_GPL(hi6250_lpm3_get);
 
 struct hi6250_lpm3_state {
 	u32 iso, rst, clk, pwrack;
@@ -210,7 +242,7 @@ static int hi6250_lpm3_pd_probe(struct platform_device *pdev)
 	l->chan = mbox_request_channel(&l->cl, 0);
 	if (IS_ERR(l->chan))
 		return dev_err_probe(dev, PTR_ERR(l->chan),
-				     "LPM3 mailbox 14 (another client such as bach2_asp holds it?)\n");
+				     "LPM3 mailbox 14 (an old bach2_asp/hi6402_e2 that requests it itself?)\n");
 	ret = devm_add_action_or_reset(dev, hi6250_lpm3_free_chan, l->chan);
 	if (ret)
 		return ret;
@@ -247,7 +279,12 @@ static int hi6250_lpm3_pd_probe(struct platform_device *pdev)
 
 	l->onecell.domains = l->domains;
 	l->onecell.num_domains = ARRAY_SIZE(l->domains);
-	return of_genpd_add_provider_onecell(np, &l->onecell);
+	ret = of_genpd_add_provider_onecell(np, &l->onecell);
+	if (ret)
+		return ret;
+	/* From here on hi6250_lpm3_get() hands the channel to the other mailbox-14 users. */
+	platform_set_drvdata(pdev, l);
+	return 0;
 }
 
 static const struct of_device_id hi6250_lpm3_pd_of_match[] = {
