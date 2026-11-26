@@ -52,6 +52,16 @@
  */
 static bool coherent_buf = true;
 module_param(coherent_buf, bool, 0444);
+/*
+ * bach2 A13 (docs/mainline-amps.md section 26) [V trace + code]: each SLIMbus port is one channel and each port's DMA
+ * walks only DMA_LLI_NUM (2) LLI nodes, which the irq handler never re-points. So the hardware layout is planar
+ * (port 0 = channel 0, port 1 = channel 1) and covers exactly 2 periods. The vendor tables put port p's node k at
+ * slot k * ports + p (period-planar), and ALSA allowed up to 32 interleaved periods: only periods 0-1 were played or
+ * captured, each speaker got alternating L/R words at half speed. planar=1 (default): non-interleaved access,
+ * exactly 2 periods, port p node k = channel p's period k (ALSA's non-interleaved buffer). Users go through plughw.
+ */
+static bool planar = true;
+module_param(planar, bool, 0444);
 MODULE_PARM_DESC(coherent_buf, "1: ring+LLI from dma_alloc_coherent; 0: vendor fixed hifi_data buffers");
 #define BACH2_LLI_AREA	1024	/* PCM_PORTS_NUM * DMA_LLI_NUM * 32 B, as HI3XXX_PCM_DMA_LLI_*_SIZE */
 static struct {
@@ -264,6 +274,29 @@ static const struct snd_pcm_hardware hi3xxx_asp_dmac_hardware = {
 	.buffer_bytes_max	= 128 * 1024,
 };
 
+/* bach2 A13: see "planar" above */
+static const struct snd_pcm_hardware hi3xxx_asp_dmac_hardware_planar = {
+	.info			= SNDRV_PCM_INFO_MMAP |
+				  SNDRV_PCM_INFO_MMAP_VALID |
+				  SNDRV_PCM_INFO_NONINTERLEAVED,
+	/* C5g [V]: the SLIMbus play track is 24-bit and each port takes one 32-bit FIFO word per frame, so packed
+	 * S16 drains at 2x. Only 24-bit samples in 32-bit containers play at real time; S16 users go through
+	 * plughw or a converting GStreamer sink. */
+	.formats		= SNDRV_PCM_FMTBIT_S24_LE,
+	/* The SLIMbus play track and the DMA run at 48 kHz only. Without these limits ALSA accepted the UI's 8 kHz PCMU
+	 * as-is, so it played ~6x too fast and the period checks fired every 3 ms (A6, cycle 18 [V]). */
+	.rates			= SNDRV_PCM_RATE_48000,
+	.rate_min		= 48000,
+	.rate_max		= 48000,
+	.channels_min		= 2,
+	.channels_max		= 2,
+	.period_bytes_min	= 32,
+	.period_bytes_max	= 16 * 1024,
+	.periods_min		= DMA_LLI_NUM,
+	.periods_max		= DMA_LLI_NUM,
+	.buffer_bytes_max	= DMA_LLI_NUM * 16 * 1024,
+};
+
 /*
 *dma operations
 */
@@ -278,10 +311,14 @@ static void asp_dma_set_lli_node(struct snd_pcm_substream *substream, unsigned i
 
 	pr_debug("[%s:%d] set dma buf[%d/%d] dma_size: %d\n", __FUNCTION__, __LINE__, prtd->dma_buf_next[port_index], dma_buf_num, dma_size);
 
+	unsigned int slot = prtd->dma_buf_next[port_index];
+
+	if (planar)	/* bach2 A13: channel port_index's block, period lli_index (non-interleaved buffer) */
+		slot = port_index * substream->runtime->periods + lli_index;
 	if (SNDRV_PCM_STREAM_PLAYBACK == substream->stream) {
-		prtd->pdma_lli_cfg[port_index][lli_index].src_addr = prtd->dma_addr + prtd->dma_buf_next[port_index] * dma_size;
+		prtd->pdma_lli_cfg[port_index][lli_index].src_addr = prtd->dma_addr + slot * dma_size;
 	} else {
-		prtd->pdma_lli_cfg[port_index][lli_index].des_addr = prtd->dma_addr + prtd->dma_buf_next[port_index] * dma_size;
+		prtd->pdma_lli_cfg[port_index][lli_index].des_addr = prtd->dma_addr + slot * dma_size;
 	}
 
 	prtd->dma_buf_next[port_index] = (prtd->dma_buf_next[port_index] + ports_cnt) % dma_buf_num;
@@ -898,7 +935,7 @@ static int hi3xxx_asp_dmac_open(struct snd_pcm_substream *substream)
 
 	spin_unlock(&prtd->lock);
 
-	ret = snd_soc_set_runtime_hwparams(substream, &hi3xxx_asp_dmac_hardware);
+	ret = snd_soc_set_runtime_hwparams(substream, planar ? &hi3xxx_asp_dmac_hardware_planar : &hi3xxx_asp_dmac_hardware);
 
 	return ret;
 
