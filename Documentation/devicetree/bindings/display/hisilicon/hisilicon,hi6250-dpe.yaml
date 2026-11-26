@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/display/hisilicon/hisilicon,hi6250-dpe.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: HiSilicon Hi6250 display subsystem (DSS), bootloader-initialized pipeline
+
+maintainers:
+  - linux-bach2 <linux-bach2@users.noreply.github.com>
+
+description:
+  The display subsystem of the Hi6250 (Kirin 659). The bootloader powers it,
+  sets up DSI and the panel and leaves the online pipeline (read channel D0,
+  overlay 0, LDI0) scanning out a reserved buffer. This binding describes that
+  running pipeline only; power, clocks, resets and the panel stay with the
+  bootloader and are not described.
+
+properties:
+  compatible:
+    const: hisilicon,hi6250-dpe
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    items:
+      - description: PDP interrupt (ITF0 VSYNC, underflow)
+
+  hisilicon,crg-syscon:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: CRG syscon, read to check that the DSS is clocked and powered
+
+  memory-region:
+    items:
+      - description: CMA pool for scanout buffers (shared-dma-pool, reusable)
+      - description: the buffer the bootloader scans out
+
+  memory-region-names:
+    items:
+      - const: pool
+      - const: boot
+
+required:
+  - compatible
+  - reg
+  - interrupts
+  - hisilicon,crg-syscon
+  - memory-region
+  - memory-region-names
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/interrupt-controller/arm-gic.h>
+
+    display-controller@e8600000 {
+        compatible = "hisilicon,hi6250-dpe";
+        reg = <0xe8600000 0x80000>;
+        interrupts = <GIC_SPI 245 IRQ_TYPE_LEVEL_HIGH>;
+        hisilicon,crg-syscon = <&crg_ctrl>;
+        memory-region = <&kms_pool>, <&logo_buffer>;
+        memory-region-names = "pool", "boot";
+    };

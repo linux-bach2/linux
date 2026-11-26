@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config DRM_HI6250_KMS
+	tristate "HiSilicon Hi6250 DSS (adopt the bootloader pipeline)"
+	depends on DRM && OF && MMU
+	depends on ARCH_HISI || COMPILE_TEST
+	select DRM_CLIENT_SELECTION
+	select DRM_GEM_DMA_HELPER
+	select DRM_KMS_HELPER
+	select MFD_SYSCON
+	help
+	  KMS driver for the display subsystem of the HiSilicon Hi6250 (Kirin 659)
+	  that takes over the pipeline the bootloader left running (DSI, panel and
+	  clocks stay as they are) and adds page flips on the bootloader's layer,
+	  vblank events and dumb buffers. The DRM driver is named "kirin", so Mesa
+	  pairs it with a render-only GPU (panfrost) through kmsro.
+
+	  If in doubt, say N.
