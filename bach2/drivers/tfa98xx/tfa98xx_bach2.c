@@ -432,7 +432,37 @@ static ssize_t live_show(struct device *dev, struct device_attribute *attr, char
 			  data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8]);
 }
 static DEVICE_ATTR_RO(live);
-static struct attribute *tfa98xx_bach2_attrs[] = { &dev_attr_live.attr, NULL };
+
+/* "rpc": write "MODULE PARAM NWORDS" (a DSP get: module_id + 128), read the answer as 24-bit words. Reads only. */
+static int rpc_mod, rpc_par, rpc_n;
+static ssize_t rpc_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len)
+{
+	int m, p, n;
+
+	if (sscanf(buf, "%i %i %i", &m, &p, &n) != 3 || m < 0 || m > 15 || p < 0 || p > 255 || n < 1 || n > 32)
+		return -EINVAL;
+	rpc_mod = m; rpc_par = p; rpc_n = n;
+	return len;
+}
+static ssize_t rpc_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct tfa98xx_bach2 *t = dev_get_drvdata(dev);
+	unsigned char bytes[3 * 32] = { 0 };
+	int data[32] = { 0 }, err, i, o;
+
+	if (!t || !t->started || !rpc_n)
+		return sysfs_emit(buf, "not started\n");
+	mutex_lock(&live_lock);
+	err = tfa_dsp_cmd_id_write_read(&t->tfa, rpc_mod, rpc_par, 3 * rpc_n, bytes);
+	mutex_unlock(&live_lock);
+	tfa98xx_convert_bytes2data(3 * rpc_n, bytes, data);
+	o = sysfs_emit(buf, "m=%d p=0x%x err=%d:", rpc_mod, rpc_par, err);
+	for (i = 0; i < rpc_n; i++)
+		o += sysfs_emit_at(buf, o, " %d", data[i]);
+	return o + sysfs_emit_at(buf, o, "\n");
+}
+static DEVICE_ATTR_RW(rpc);
+static struct attribute *tfa98xx_bach2_attrs[] = { &dev_attr_live.attr, &dev_attr_rpc.attr, NULL };
 ATTRIBUTE_GROUPS(tfa98xx_bach2);
 
 static const struct of_device_id tfa98xx_bach2_of_match[] = {
