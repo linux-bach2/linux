@@ -1537,6 +1537,18 @@ config I2C_CROS_EC_TUNNEL
 	  connected there. This will work whatever the interface used to
 	  talk to the EC (SPI, I2C or LPC).
 
+config I2C_HI6250_IOMCU
+	bool "HiSilicon Hi6250 IOMCU sensorhub I2C relay"
+	depends on ARCH_HISI || COMPILE_TEST
+	depends on OF_RESERVED_MEM
+	help
+	  Starts the HiSilicon Hi6250 (Kirin 659) IOMCU sensorhub firmware
+	  that the bootloader left resident, and exposes the I2C bus the
+	  firmware drives (its I2C0, the sensor bus) as an I2C adapter, so
+	  sensor drivers such as st_accel bind to the sensors on it. The
+	  firmware's own sensor and charger modules are never loaded.
+	  Built in only: the firmware is started once per boot.
+
 config I2C_XGENE_SLIMPRO
 	tristate "APM X-Gene SoC I2C SLIMpro devices support"
 	depends on ARCH_XGENE && MAILBOX

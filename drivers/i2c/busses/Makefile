@@ -150,6 +150,7 @@ obj-$(CONFIG_I2C_ACORN)		+= i2c-acorn.o
 obj-$(CONFIG_I2C_BCM_KONA)	+= i2c-bcm-kona.o
 obj-$(CONFIG_I2C_BRCMSTB)	+= i2c-brcmstb.o
 obj-$(CONFIG_I2C_CROS_EC_TUNNEL)	+= i2c-cros-ec-tunnel.o
+obj-$(CONFIG_I2C_HI6250_IOMCU)	+= i2c-hi6250-iomcu.o
 obj-$(CONFIG_I2C_ELEKTOR)	+= i2c-elektor.o
 obj-$(CONFIG_I2C_ICY)		+= i2c-icy.o
 obj-$(CONFIG_I2C_MLXBF)		+= i2c-mlxbf.o
