@@ -47,6 +47,18 @@ MODULE_PARM_DESC(fw_name, "container file under /lib/firmware");
  * (-60 dBFS was loud). atten_db is added to the vstep's VOL attenuation after every start (0.5 dB steps, VOL max
  * 254 = -127 dB; 255 = mute). Default 30 dB; the UI's software volume sits on top.
  */
+/*
+ * Section 31: TDM receive-format overrides, applied after the start with TDME off/on (-1 = keep the container's).
+ * The container sets 32-bit samples in 32-bit slots, while the HI6402 S4 sends 24-bit words: the 8 trailing bits
+ * may carry garbage. tdm_ssize = sample bits - 1 (23 = 24-bit), tdm_adj = TDMADJ, tdm_clinv = TDMCLINV (BCK edge).
+ */
+static int tdm_ssize = -1, tdm_adj = -1, tdm_clinv = -1;
+module_param(tdm_ssize, int, 0444);
+module_param(tdm_adj, int, 0444);
+module_param(tdm_clinv, int, 0444);
+MODULE_PARM_DESC(tdm_ssize, "TDMSSIZE override (sample bits - 1, e.g. 23), -1 = container");
+MODULE_PARM_DESC(tdm_adj, "TDMADJ override (0/1), -1 = container");
+MODULE_PARM_DESC(tdm_clinv, "TDMCLINV override (0/1), -1 = container");
 static int atten_db = 30;
 module_param(atten_db, int, 0444);
 MODULE_PARM_DESC(atten_db, "extra amplifier attenuation in dB on top of the container vstep (0..127, default 30)");
@@ -380,6 +392,20 @@ static int tfa98xx_bach2_probe(struct i2c_client *i2c)
 					pr_info(LOGP "0x%02x A5 volume: VOL %d -> %d (+%d dB attenuation): %d, readback %d\n",
 						i2c->addr, v0, v, clamp(atten_db, 0, 127), tfa98xx_set_volume_level(tfa, v),
 						tfa_get_bf(tfa, 0x5187));
+				}
+				if (!ret && (tdm_ssize >= 0 || tdm_adj >= 0 || tdm_clinv >= 0)) {
+					/* TFA9894 fields: TDME 0x2000, TDMCLINV 0x2070, TDMADJ 0x20a0, TDMSSIZE 0x22a4 */
+					tfa_set_bf(tfa, 0x2000, 0);
+					if (tdm_ssize >= 0)
+						tfa_set_bf(tfa, 0x22a4, tdm_ssize & 0x1f);
+					if (tdm_adj >= 0)
+						tfa_set_bf(tfa, 0x20a0, !!tdm_adj);
+					if (tdm_clinv >= 0)
+						tfa_set_bf(tfa, 0x2070, !!tdm_clinv);
+					tfa_set_bf(tfa, 0x2000, 1);
+					pr_info(LOGP "0x%02x A5 tdm: ssize=%d adj=%d clinv=%d (regs 20=%04x 22=%04x)\n", i2c->addr,
+						tfa_get_bf(tfa, 0x22a4), tfa_get_bf(tfa, 0x20a0), tfa_get_bf(tfa, 0x2070),
+						tfa_get_bf(tfa, 0x200f), tfa_get_bf(tfa, 0x220f));
 				}
 				report(t, ret ? "A5 START-FAILED" : "A5 started");
 				pr_info(LOGP "0x%02x A5 result %d\n", i2c->addr, ret);
