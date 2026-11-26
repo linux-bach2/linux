@@ -20,6 +20,9 @@
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/pm_wakeirq.h>
+#include <linux/pm_wakeup.h>
+#include <linux/property.h>
 #include <linux/regmap.h>
 
 #define PMIC_REG(r)		((r) << 2)
@@ -32,6 +35,7 @@
 #define PWRKEY_BITS		(PWRKEY_DOWN | PWRKEY_UP)
 
 struct hi6250_pwrkey {
+	struct device *dev;
 	struct regmap *map;
 	struct input_dev *input;
 };
@@ -55,6 +59,8 @@ static irqreturn_t hi6250_pwrkey_irq(int irq, void *data)
 		return (st0 || st1) ? IRQ_HANDLED : IRQ_NONE;
 
 	/* A short press can latch both edges before the handler runs: report press, then release. */
+	if (device_may_wakeup(pk->dev))
+		pm_wakeup_event(pk->dev, 0);
 	if (st0 & PWRKEY_DOWN) {
 		input_report_key(pk->input, KEY_POWER, 1);
 		input_sync(pk->input);
@@ -83,6 +89,7 @@ static int hi6250_pwrkey_probe(struct platform_device *pdev)
 	pk = devm_kzalloc(dev, sizeof(*pk), GFP_KERNEL);
 	if (!pk)
 		return -ENOMEM;
+	pk->dev = dev;
 
 	pk->map = syscon_regmap_lookup_by_phandle(dev->of_node, "hisilicon,pmic-syscon");
 	if (IS_ERR(pk->map))
@@ -134,7 +141,14 @@ static int hi6250_pwrkey_probe(struct platform_device *pdev)
 	      regmap_read(pk->map, PMIC_IRQ_MASK1, &m1);
 	if (ret)
 		return ret;
-	dev_info(dev, "power key armed: mask=%02x,%02x irq=%d\n", m0 & 0xff, m1 & 0xff, irq);
+	if (device_property_read_bool(dev, "wakeup-source")) {
+		device_init_wakeup(dev, true);
+		ret = devm_pm_set_wake_irq(dev, irq);
+		if (ret)
+			dev_warn(dev, "cannot set wake IRQ %d (%d)\n", irq, ret);
+	}
+	dev_info(dev, "power key armed: mask=%02x,%02x irq=%d wakeup=%d\n",
+		 m0 & 0xff, m1 & 0xff, irq, device_may_wakeup(dev));
 	return 0;
 }
 

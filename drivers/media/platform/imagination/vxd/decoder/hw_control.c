@@ -13,6 +13,7 @@
  *	Prashanth Kumar Amai <prashanth.ka@pathpartnertech.com>
  */
 
+#include <linux/io.h>
 #include <linux/types.h>
 #include <linux/dma-mapping.h>
 #include <media/v4l2-ctrls.h>
@@ -61,10 +62,11 @@ struct hwctrl_ctx {
 
 struct vdeckm_context {
 	unsigned int core_num;
+	struct vxd_dev *vxd;
 	struct vxd_coreprops props;
 	unsigned short current_msgid;
 	unsigned char reader_active;
-	void *comms_ram_addr;
+	void __iomem *comms_ram_addr;
 	unsigned int state_offset;
 	unsigned int state_size;
 };
@@ -525,14 +527,14 @@ static int vdeckm_process_msg(const void *hndl_vxd, unsigned int *msg,
 	return ret;
 }
 
-static void vdeckm_vlr_copy(void *dst, void *src, unsigned int size)
+static void vdeckm_vlr_copy(void *dst, void __iomem *src, unsigned int size)
 {
 	unsigned int *pdst = (unsigned int *)dst;
-	unsigned int *psrc = (unsigned int *)src;
+	u32 __iomem *psrc = (u32 __iomem *)src;
 
 	size /= 4;
 	while (size--)
-		*pdst++ = *psrc++;
+		*pdst++ = readl(psrc++);
 }
 
 static int vdeckm_get_core_state(const void *hndl_vxd, struct vxd_states *state)
@@ -551,7 +553,8 @@ static int vdeckm_get_core_state(const void *hndl_vxd, struct vxd_states *state)
 		return IMG_ERROR_INVALID_PARAMETERS;
 #endif
 
-	if (!core_ctx || !state)
+	if (!core_ctx || !state || !core_ctx->vxd || !core_ctx->vxd->hw_on ||
+	    !core_ctx->comms_ram_addr)
 		return IMG_ERROR_INVALID_PARAMETERS;
 
 	/*
@@ -562,8 +565,8 @@ static int vdeckm_get_core_state(const void *hndl_vxd, struct vxd_states *state)
 		/*
 		 * get the state buffer info.
 		 */
-		regval = *((unsigned int *)core_ctx->comms_ram_addr +
-			(PVDEC_COM_RAM_STATE_BUF_SIZE_AND_OFFSET_OFFSET / sizeof(unsigned int)));
+		regval = readl(core_ctx->comms_ram_addr +
+			       PVDEC_COM_RAM_STATE_BUF_SIZE_AND_OFFSET_OFFSET);
 		core_ctx->state_size = PVDEC_COM_RAM_BUF_GET_SIZE(regval, STATE);
 		core_ctx->state_offset = PVDEC_COM_RAM_BUF_GET_OFFSET(regval, STATE);
 	}
@@ -577,7 +580,7 @@ static int vdeckm_get_core_state(const void *hndl_vxd, struct vxd_states *state)
 		 * checkpoint in the firmware.
 		 * Read the firmware state from VEC Local RAM
 		 */
-		vdeckm_vlr_copy(&firmware_state, (unsigned char *)core_ctx->comms_ram_addr +
+		vdeckm_vlr_copy(&firmware_state, core_ctx->comms_ram_addr +
 				core_ctx->state_offset, core_ctx->state_size);
 
 		for (pipe = 0; pipe < core_ctx->props.num_pixel_pipes; pipe++) {
@@ -1083,42 +1086,28 @@ int hwctrl_getregsoffset(void *hndl_hwctx, struct decoder_regsoffsets *regs_offs
 static int pvdec_create(struct vxd_dev *vxd, struct vxd_coreprops *core_props,
 			void **hndl_vdeckm_context)
 {
-	struct vdeckm_context  *corectx;
-	struct vxd_core_props hndl_core_props;
-	int result;
-	int iMapSize, pageSize;
-	void *phy_addr;
+	struct vdeckm_context *corectx;
 
 	if (!hndl_vdeckm_context || !core_props)
 		return IMG_ERROR_INVALID_PARAMETERS;
 
 	/*
-	 * Obtain core context.
+	 * Obtain core context. Reuse the core properties already fetched during
+	 * vxd_dec_probe() while the decoder domain was powered, and derive COMMS
+	 * RAM directly from vxd->reg_base instead of a hardcoded SoC address.
 	 */
 	corectx = &acore_ctx[0];
 
 	memset(corectx, 0, sizeof(*corectx));
 
 	corectx->core_num = 0;
+	corectx->vxd = vxd;
 
-	result = vxd_pvdec_get_props(vxd->dev, vxd->reg_base, &hndl_core_props);
-	if (result != 0)
-		return result;
-
-	vxd_get_coreproperties(&hndl_core_props, &corectx->props);
+	vxd_get_coreproperties(&vxd->props, &corectx->props);
 
 	memcpy(core_props, &corectx->props, sizeof(*core_props));
 
-	pageSize = PAGE_SIZE;
-	/* end aligned to page (ceiling), in pages */
-	iMapSize = (PVDEC_COMMS_RAM_OFFSET + PVDEC_COMMS_RAM_SIZE + pageSize - 1) / pageSize;
-	/* subtract start aligned to page (floor), in pages */
-	iMapSize -= PVDEC_COMMS_RAM_OFFSET / pageSize;
-	/* convert to bytes */
-	iMapSize *= pageSize;
-	phy_addr = (void *)(0x4300000);
-	phy_addr += (PVDEC_COMMS_RAM_OFFSET);
-	corectx->comms_ram_addr = ioremap((phys_addr_t)phy_addr, iMapSize);
+	corectx->comms_ram_addr = vxd->reg_base + PVDEC_COMMS_RAM_OFFSET;
 	*hndl_vdeckm_context = corectx;
 
 	return 0;

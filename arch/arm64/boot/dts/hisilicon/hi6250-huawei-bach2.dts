@@ -223,6 +223,7 @@
 		compatible = "hisilicon,hi6250-pmic-powerkey";
 		hisilicon,pmic-syscon = <&pmu_ctrl>;
 		interrupts-extended = <&gpio23 7 IRQ_TYPE_LEVEL_LOW>;
+		wakeup-source;
 	};
 
 	/*
@@ -702,6 +703,30 @@
 
 &usb {
 	status = "ok";
+};
+
+/*
+ * Hardware video decoder (proposed 0172, docs/mainline-vdec.md): the Imagination PVDEC (D5500)
+ * of the stock vdec@0xe8800000 node, SPI 257. vxd-dec powers it with the stock CRG/PMC sequence
+ * (vcodecsubsys and the vdec MTCMOS domain, NOC idle handshake in the PMC) at the stock clock
+ * rates and loads the stock MTX firmware (pvdec_full_bin.fw, not distributed) at the first open.
+ */
+/ {
+	soc {
+		pmctrl: pmctrl@fff31000 {
+			compatible = "hisilicon,hi6250-pmctrl", "syscon";
+			reg = <0x0 0xfff31000 0x0 0x1000>;
+		};
+
+		video-codec@e8800000 {
+			compatible = "hisilicon,hi6250-vdec";
+			reg = <0x0 0xe8800000 0x0 0x100000>;
+			interrupts = <GIC_SPI 257 IRQ_TYPE_LEVEL_HIGH>;
+			hisilicon,crg-syscon = <&crg_ctrl>;
+			hisilicon,pmctrl-syscon = <&pmctrl>;
+			firmware-name = "pvdec_full_bin.fw";
+		};
+	};
 };
 
 /* Bring-up: every plain reboot or panic goes to fastboot (vendor reason 0x01), so the host can restore the stock kernel. */
