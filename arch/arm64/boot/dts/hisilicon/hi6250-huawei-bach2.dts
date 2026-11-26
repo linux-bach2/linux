@@ -819,4 +819,17 @@
 		};
 	};
 };
+
+/*
+ * GPU (proposed 0153, docs/mainline-gpu-display.md stage G2): the LPM3 power domain provider and the
+ * Mali-T830 for panfrost. The provider takes LPM3 mailbox 14, so bach2,asp and bach2,audio-e2 (also
+ * mailbox 14) cannot bind in the same boot. No OPP table: panfrost makes no GPU frequency request.
+ */
+&lpm3_pd {
+	status = "okay";
+};
+
+&gpu {
+	status = "okay";
+};
 #include "hi6250-huawei-bach2-emmc.dtsi"
