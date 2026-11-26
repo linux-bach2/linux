@@ -570,6 +570,19 @@
 			status = "disabled";
 		};
 
+		/*
+		 * Display subsystem (stock hisifb framebuffer@E8600000, PDP interrupt SPI 245). The
+		 * bootloader owns its power, clocks, DSI and the panel; hisilicon,hi6250-dpe only adopts
+		 * the running pipeline. A board adds the CMA pool and the boot buffer and enables it.
+		 */
+		dpe: display-controller@e8600000 {
+			compatible = "hisilicon,hi6250-dpe";
+			reg = <0x0 0xe8600000 0x0 0x80000>;
+			interrupts = <GIC_SPI 245 IRQ_TYPE_LEVEL_HIGH>;
+			hisilicon,crg-syscon = <&crg_ctrl>;
+			status = "disabled";
+		};
+
 		mailbox: mailbox@e896b000 { /* not sure */
 			compatible = "hisilicon,hi3660-mbox";
 			reg = <0x0 0xe896b000 0x0 0x1000>;
