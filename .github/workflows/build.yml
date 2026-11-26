@@ -159,8 +159,8 @@ jobs:
           # Fast host loop (no kernel tree, no relink on the tablet): CI's Image + DTB + out-of-tree modules.
           # The tablet packs its private initramfs as an external initrd next to them.
           rm -rf $B/hostfast; mkdir -p $B/hostfast
-          cp $B/pub/Image.gz arch/arm64/boot/dts/$DTB .config $B/toolchain.txt $B/hostloop/modules-ext.tar.zst $B/hostloop/bach2-src.sha256 $B/hostfast/
-          cp include/config/kernel.release $B/hostfast/kernel.release
+          cp $B/pub/Image.gz arch/arm64/boot/dts/$DTB $B/toolchain.txt $B/hostloop/modules-ext.tar.zst $B/hostloop/bach2-src.sha256 $B/hostfast/
+          cp include/config/kernel.release $B/hostfast/kernel.release; cp .config $B/hostfast/config   # no dotfiles: upload-artifact skips them
           (cd $B/hostfast && sha256sum * > SHA256SUMS)
           mkdir -p $B/pub/bach2-modules && (cd $B && xargs -a /tmp/kos cp --parents -t $B/pub/bach2-modules 2>/dev/null || while read -r f; do mkdir -p $B/pub/bach2-modules/$(dirname $f); cp $f $B/pub/bach2-modules/$f; done < /tmp/kos)
           tar -C $B/pub -czf $B/pub/bach2-modules-$KREL.tar.gz bach2-modules && rm -rf $B/pub/bach2-modules
