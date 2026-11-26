@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/media/hisilicon,hi6250-vdec.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: HiSilicon Hi6250 video decoder (Imagination PVDEC D5500)
+
+maintainers:
+  - linux-bach2 <linux-bach2@users.noreply.github.com>
+
+description:
+  The Hi6250 (Kirin 659) video decoder is an Imagination PowerVR PVDEC (VXD, DDK "D5500")
+  with an MTX co-processor that runs a firmware loaded by the host, and its own MMU. Its
+  power (the vcodec subsystem and the vdec MTCMOS domain), clocks and resets are switched
+  through CRG registers and a NOC idle handshake in the power management controller.
+
+properties:
+  compatible:
+    const: hisilicon,hi6250-vdec
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 1
+
+  hisilicon,crg-syscon:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: the CRG (clock and reset generator) syscon
+
+  hisilicon,pmctrl-syscon:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: the power management controller syscon (NOC power idle registers)
+
+  firmware-name:
+    maxItems: 1
+    description: MTX firmware file, default pvdec_full_bin.fw
+
+required:
+  - compatible
+  - reg
+  - interrupts
+  - hisilicon,crg-syscon
+  - hisilicon,pmctrl-syscon
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/interrupt-controller/arm-gic.h>
+    video-codec@e8800000 {
+        compatible = "hisilicon,hi6250-vdec";
+        reg = <0xe8800000 0x100000>;
+        interrupts = <GIC_SPI 257 IRQ_TYPE_LEVEL_HIGH>;
+        hisilicon,crg-syscon = <&crg_ctrl>;
+        hisilicon,pmctrl-syscon = <&pmctrl>;
+    };

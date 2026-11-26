@@ -14,6 +14,7 @@
  */
 
 #include <linux/firmware.h>
+#include <linux/pm_runtime.h>
 #include <linux/completion.h>
 #include <linux/slab.h>
 #include <linux/idr.h>
@@ -62,8 +63,6 @@
 
 #define VXD_MSG_ID_GET_CNT(MSG_ID) \
 	(((MSG_ID) & VXD_MSG_CNT_MASK) >> VXD_MSG_CNT_SHIFT)
-
-static const unsigned char *drv_fw_name = "pvdec_full_bin.fw";
 
 /* Driver context */
 static struct {
@@ -145,11 +144,20 @@ static int vxd_make_hw_on_locked(struct vxd_dev *vxd, unsigned int fw_ptd)
 		return -ENOENT;
 	}
 
+	/* Power the decoder domain (Hi6250: CRG/PMC sequence in vxd_hi6250.c) */
+	ret = pm_runtime_resume_and_get(vxd->dev);
+	if (ret < 0) {
+		dev_err(vxd->dev, "%s: failed to power the decoder (%d)\n", __func__, ret);
+		return ret;
+	}
+	vxd->hw_powered = 1;
+
 	memset(&ena_params, 0, sizeof(struct vxd_ena_params));
 
 	ena_params.fw_buf_size = fw_size - sizeof(struct vxd_fw_hdr);
 	ena_params.fw_buf_virt_addr = vxd_drv.virt_space.fw_addr;
 	ena_params.ptd = fw_ptd;
+	vxd->boot_ptd = fw_ptd;
 	ena_params.boot_poll.msleep_cycles = 50;
 	ena_params.crc = 0;
 	ena_params.rendec_addr = vxd_drv.virt_space.rendec_addr;
@@ -193,6 +201,11 @@ static void vxd_make_hw_off_locked(struct vxd_dev *vxd, unsigned char suspending
 	vxd->hw_on = 0;
 	if (ret)
 		dev_err(vxd->dev, "%s: failed to power off the VXD!\n", __func__);
+
+	/* No register access after this point: the domain loses power */
+	vxd->hw_powered = 0;
+	synchronize_hardirq(vxd->module_irq);
+	pm_runtime_put_sync(vxd->dev);
 }
 
 /*
@@ -522,6 +535,8 @@ static void vxd_schedule_locked(struct vxd_dev *vxd)
 			dev_err(vxd->dev, "%s: failed to start HW!\n", __func__);
 			vxd->hw_dead = 1;
 			vxd_handle_io_error_locked(vxd);
+			/* do not leave a dead core powered */
+			vxd_make_hw_off_locked(vxd, FALSE);
 			return;
 		}
 
@@ -587,15 +602,11 @@ static void stream_worker(void *work)
 int vxd_create_ctx(struct vxd_dev *vxd, struct vxd_dec_ctx *ctx)
 {
 	int ret = 0;
-	unsigned int fw_load_retries = 2 * 1000;
 
-	while (!vxd->firmware.ready) {
-		usleep_range(1000, 2000);
-		fw_load_retries--;
-	}
-	if (vxd->firmware.buf_id == 0) {
-		dev_err(vxd->dev, "%s: request fw not yet done!\n", __func__);
-		return -EAGAIN;
+	if (!vxd->firmware.ready) {
+		ret = vxd_prepare_fw(vxd);
+		if (ret)
+			return ret;
 	}
 
 	/* Create memory management context for HW buffers */
@@ -643,8 +654,9 @@ int vxd_create_ctx(struct vxd_dev *vxd, struct vxd_dec_ctx *ctx)
 	ret = vxd_make_hw_on_locked(vxd, ctx->ptd);
 	if (ret) {
 		dev_err(vxd->dev, "%s:%d: failed to start HW\n", __func__, __LINE__);
-		ret = -EPERM;
-		vxd->hw_on = FALSE;
+		ret = -EIO;
+		/* reset the core and drop the power reference taken by the failed boot */
+		vxd_make_hw_off_locked(vxd, FALSE);
 		goto out_unmap_rendec;
 	}
 
@@ -676,6 +688,16 @@ void vxd_destroy_ctx(struct vxd_dev *vxd, struct vxd_dec_ctx *ctx)
 
 	flush_work(ctx->work);
 
+	/*
+	 * The MTX MMU may still use this stream's page tables (it booted in them, or the last
+	 * decode switched to them). Stop the core before they are freed when this was the last
+	 * stream, or the boot context with nothing in flight; the next message reboots the
+	 * firmware in another stream's context.
+	 */
+	if (vxd->hw_on && (vxd->fw_refcnt == 0 ||
+			   (ctx->ptd == vxd->boot_ptd && list_empty(&vxd->msgs))))
+		vxd_make_hw_off_locked(vxd, FALSE);
+
 	img_mmu_unmap(ctx->mmu_ctx, vxd->mem_ctx, vxd->rendec_buf_id);
 
 	img_mmu_unmap(ctx->mmu_ctx, vxd->mem_ctx, vxd->firmware.buf_id);
@@ -686,7 +708,7 @@ void vxd_destroy_ctx(struct vxd_dev *vxd, struct vxd_dec_ctx *ctx)
 
 	if (vxd->fw_refcnt == 0) {
 #ifdef DEBUG_DECODER_DRIVER
-		dev_info(vxd->dev, "FW: put %s\n", drv_fw_name);
+		dev_info(vxd->dev, "FW: put %s\n", vxd->fw_name);
 #endif
 		/* Poke the monitor to finally switch off the hw, when needed */
 		vxd_monitor_locked(vxd);
@@ -700,7 +722,7 @@ irqreturn_t vxd_handle_irq(void *dev)
 	struct vxd_hw_state *hw_state = &vxd->state.hw_state;
 	int ret;
 
-	if (!vxd)
+	if (!vxd || !vxd->hw_powered)
 		return IRQ_NONE;
 
 	ret = vxd_pvdec_clear_int(vxd->reg_base, &hw_state->irq_status);
@@ -1279,60 +1301,60 @@ void vxd_deinit(struct vxd_dev *vxd)
 #endif
 }
 
-static void vxd_fw_loaded(const struct firmware *fw, void *context)
+/*
+ * Fetch the firmware and copy it into a device buffer. Called at the first open
+ * (vxd_create_ctx(), with vxd->mutex held): the file lives on the root filesystem,
+ * which is not mounted yet when the driver probes.
+ */
+int vxd_prepare_fw(struct vxd_dev *vxd)
 {
-	struct vxd_dev *vxd = context;
+	const struct firmware *fw;
 	unsigned long bin_size;
-	int buf_id;
 	struct vxd_fw_hdr *hdr;
 	void *buf_kptr;
+	int buf_id;
 	int ret;
-	unsigned long size = 0;
-	const unsigned char *data = NULL;
 
-	if (!fw) {
-		dev_err(vxd->dev, "Firmware binary is not present\n");
-		vxd->no_fw = 1;
-		return;
+	if (vxd->firmware.ready)
+		return 0;
+
+	ret = request_firmware(&fw, vxd->fw_name, vxd->dev);
+	if (ret) {
+		dev_err(vxd->dev, "firmware %s not available (%d)\n", vxd->fw_name, ret);
+		return ret;
 	}
 
-	size = fw->size;
-	data = fw->data;
-
-#ifdef DEBUG_DECODER_DRIVER
-	dev_info(vxd->dev, "FW: acquired %s size %zu\n", drv_fw_name, size);
-#endif
-
 	/* Sanity verification of the firmware */
-	if (size < sizeof(struct vxd_fw_hdr)) {
+	if (fw->size < sizeof(struct vxd_fw_hdr)) {
 		dev_err(vxd->dev, "%s: firmware file too small!\n", __func__);
+		ret = -EINVAL;
 		goto out;
 	}
 
-	bin_size = size - sizeof(struct vxd_fw_hdr);
+	bin_size = fw->size - sizeof(struct vxd_fw_hdr);
+	hdr = kzalloc(sizeof(*hdr), GFP_KERNEL);
+	if (!hdr) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	memcpy(hdr, fw->data, sizeof(struct vxd_fw_hdr));
+	dev_info(vxd->dev, "FW: %s size %zu: core %u, blob %u, id 0x%08x, timestamp %u\n",
+		 vxd->fw_name, fw->size, hdr->core_size, hdr->blob_size,
+		 hdr->firmware_id, hdr->timestamp);
+
+	/* Check if header is consistent */
+	if (hdr->core_size > bin_size || hdr->blob_size > bin_size ||
+	    hdr->core_size > vxd->props.mtx_ram_size) {
+		dev_err(vxd->dev, "%s: got invalid firmware (MTX RAM %u)!\n", __func__,
+			vxd->props.mtx_ram_size);
+		ret = -EINVAL;
+		goto out_release_hdr;
+	}
+
 	ret = img_mem_alloc(vxd->dev, vxd_drv.mem_ctx, vxd_drv.internal_heap_id,
 			    bin_size, (enum mem_attr)0, &buf_id);
 	if (ret) {
 		dev_err(vxd->dev, "%s: failed to alloc fw buffer (err:%d)!\n", __func__, ret);
-		goto out;
-	}
-
-	hdr = kzalloc(sizeof(*hdr), GFP_KERNEL);
-	if (!hdr)
-		goto out_release_buf;
-
-	/* Store firmware header in vxd context */
-	memcpy(hdr, data, sizeof(struct vxd_fw_hdr));
-
-#ifdef DEBUG_DECODER_DRIVER
-	dev_info(vxd->dev, "FW: info cs: %u, bs: %u, id: 0x%08x, ts: %u\n",
-		 hdr->core_size, hdr->blob_size,
-		 hdr->firmware_id, hdr->timestamp);
-#endif
-
-	/* Check if header is consistent */
-	if (hdr->core_size > bin_size || hdr->blob_size > bin_size) {
-		dev_err(vxd->dev, "%s: got invalid firmware!\n", __func__);
 		goto out_release_hdr;
 	}
 
@@ -1340,71 +1362,27 @@ static void vxd_fw_loaded(const struct firmware *fw, void *context)
 	ret = img_mem_map_km(vxd_drv.mem_ctx, buf_id);
 	if (ret) {
 		dev_err(vxd->dev, "%s: failed to map FW buf to cpu! (%d)\n", __func__, ret);
-		goto out_release_hdr;
+		goto out_release_buf;
 	}
 
 	/* Copy firmware to device buffer */
 	buf_kptr = img_mem_get_kptr(vxd_drv.mem_ctx, buf_id);
-	memcpy(buf_kptr, data + sizeof(struct vxd_fw_hdr), size - sizeof(struct vxd_fw_hdr));
-#ifdef DEBUG_DECODER_DRIVER
-	dev_dbg(vxd->dev, "%s: FW: copied to buffer %d kptr 0x%p\n", __func__, buf_id, buf_kptr);
-#endif
-
+	memcpy(buf_kptr, fw->data + sizeof(struct vxd_fw_hdr), bin_size);
 	img_mem_sync_cpu_to_device(vxd_drv.mem_ctx, buf_id);
 
-	vxd->firmware.fw_size = size;
+	vxd->firmware.fw_size = fw->size;
 	vxd->firmware.buf_id = buf_id;
 	vxd->firmware.hdr = hdr;
 	vxd->firmware.ready = TRUE;
-
 	release_firmware(fw);
-	complete_all(vxd->firmware_loading_complete);
-	pr_debug("Firmware loaded successfully ..!!\n");
-	return;
+	return 0;
 
-out_release_hdr:
-	kfree(hdr);
 out_release_buf:
 	img_mem_free(vxd_drv.mem_ctx, buf_id);
+out_release_hdr:
+	kfree(hdr);
 out:
 	release_firmware(fw);
-	complete_all(vxd->firmware_loading_complete);
-	kfree(vxd->firmware_loading_complete);
-	vxd->firmware_loading_complete = NULL;
-}
-
-/*
- * Takes the firmware from the file system and allocates a buffer
- */
-int vxd_prepare_fw(struct vxd_dev *vxd)
-{
-	int ret;
-
-	/* Fetch firmware from the file system */
-	struct completion **firmware_loading_complete =
-		(struct completion **)&vxd->firmware_loading_complete;
-
-	*firmware_loading_complete = kmalloc(sizeof(*firmware_loading_complete), GFP_KERNEL);
-	if (!(*firmware_loading_complete)) {
-		pr_err("Memory allocation failed for init_completion\n");
-		return -ENOMEM;
-	}
-	init_completion(*firmware_loading_complete);
-
-	if (!vxd->firmware_loading_complete)
-		return -ENOMEM;
-
-	vxd->firmware.ready = FALSE;
-	ret = request_firmware_nowait(THIS_MODULE, FW_ACTION_UEVENT,
-				      drv_fw_name, vxd->dev, GFP_KERNEL, vxd,
-				      vxd_fw_loaded);
-	if (ret < 0) {
-		dev_err(vxd->dev, "request_firmware_nowait err: %d\n", ret);
-		complete_all(vxd->firmware_loading_complete);
-		kfree(vxd->firmware_loading_complete);
-		vxd->firmware_loading_complete = NULL;
-	}
-
 	return ret;
 }
 
@@ -1413,22 +1391,13 @@ int vxd_prepare_fw(struct vxd_dev *vxd)
  */
 void vxd_clean_fw_resources(struct vxd_dev *vxd)
 {
-#ifdef DEBUG_DECODER_DRIVER
-	dev_dbg(vxd->dev, "%s:%d\n", __func__, __LINE__);
-#endif
-
-	wait_for_completion(vxd->firmware_loading_complete);
-	kfree(vxd->firmware_loading_complete);
-	vxd->firmware_loading_complete = NULL;
-
-	if (vxd->firmware.fw_size) {
+	if (vxd->firmware.ready) {
 		img_mem_free(vxd_drv.mem_ctx, vxd->firmware.buf_id);
 		kfree(vxd->firmware.hdr);
 		vxd->firmware.hdr = NULL;
-#ifdef DEBUG_DECODER_DRIVER
-		dev_info(vxd->dev, "FW: released %s\n", drv_fw_name);
-#endif
+		vxd->firmware.fw_size = 0;
 		vxd->firmware.buf_id = VXD_INVALID_ID;
+		vxd->firmware.ready = FALSE;
 	}
 }
 

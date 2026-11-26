@@ -273,6 +273,8 @@ struct vxd_dev {
 	int module_irq;
 	void __iomem *reg_base;
 	struct vxd_core_props props;
+	struct vxd_hi6250 *hi6250; /* Hi6250 power/clock glue */
+	const char *fw_name;
 	unsigned int mmu_config_addr_width;
 	int rendec_buf_id;
 	struct vxd_dev_fw firmware;
@@ -280,6 +282,8 @@ struct vxd_dev {
 	unsigned char no_fw;
 	unsigned char fw_refcnt;
 	unsigned int hw_on;
+	unsigned int hw_powered; /* decoder domain powered: registers accessible */
+	unsigned int boot_ptd; /* PTD the firmware was booted with */
 	unsigned int hw_dead;
 	void *lock; /* basic device level spinlock */
 	struct vxd_state state;

@@ -136,7 +136,7 @@ static void pvdec_mtx_status_dump(void __iomem *reg_base, unsigned int *status)
 {
 	unsigned int reg;
 
-	pr_debug("%s: *** dumping status ***\n", __func__);
+	pr_info("%s: *** dumping status ***\n", __func__);
 
 #define READ_MTX_REG(_NAME_) \
 	do { \
@@ -144,14 +144,14 @@ static void pvdec_mtx_status_dump(void __iomem *reg_base, unsigned int *status)
 		VXD_WR_REG(reg_base, MTX_CORE, \
 			MTX_REG_READ_WRITE_REQUEST, reg); \
 		if (pvdec_wait_mtx_reg_access(reg_base, &reg)) { \
-			pr_debug("%s: " \
+			pr_info("%s: " \
 				"MTX REG RD fault: 0x%08x\n", __func__, reg); \
 			break; \
 		} \
 		val = VXD_RD_REG(reg_base, MTX_CORE, MTX_REG_READ_WRITE_DATA); \
 		if (status) \
 			*status++ = val; \
-		pr_debug("%s: " _NAME_ ": 0x%08x\n", __func__, val); \
+		pr_info("%s: " _NAME_ ": 0x%08x\n", __func__, val); \
 	} while (0)
 
 	reg = 0;
@@ -190,7 +190,7 @@ static void pvdec_mtx_status_dump(void __iomem *reg_base, unsigned int *status)
 	READ_MTX_REG("MTX A0FRP");
 #undef PRINT_MTX_REG
 
-	pr_debug("%s: *** status dump done ***\n", __func__);
+	pr_info("%s: *** status dump done ***\n", __func__);
 }
 
 static void pvdec_prep_fw_upload(const void *dev,
@@ -202,10 +202,10 @@ static void pvdec_prep_fw_upload(const void *dev,
 	unsigned int vxd_ptd_addr = ena_params->ptd;
 	unsigned int reg = 0;
 	int i;
+	/* the stock DDK's flags (devaio.c DEVAIO_InitMTXComms, release build) */
 	unsigned int flags = PVDEC_FWFLAG_FORCE_FS_FLOW |
 		PVDEC_FWFLAG_DISABLE_GENC_FLUSHING |
 		PVDEC_FWFLAG_DISABLE_AUTONOMOUS_RESET |
-		PVDEC_FWFLAG_DISABLE_IDLE_GPIO |
 		PVDEC_FWFLAG_ENABLE_ERROR_CONCEALMENT;
 
 	if (ena_params->secure)
@@ -229,10 +229,14 @@ static void pvdec_prep_fw_upload(const void *dev,
 	for (i = 0; i < PVDEC_FW_COMMS_HDR_SIZE; i++)
 		VXD_WR_REG_ABS(reg_base, VLR_OFFSET + i * sizeof(unsigned int), 0);
 
+	/*
+	 * 2016 DDK firmware: the word at PVDEC_FW_ID_OFFSET is the firmware debug level on
+	 * input (stock writes 0xffffffff), then the flags, then the signature is reset to 0
+	 * (TI's later firmware reads a "do not wait for the debug FIFO" flag there instead).
+	 */
+	VXD_WR_REG_ABS(reg_base, VLR_OFFSET + PVDEC_FW_ID_OFFSET, 0xffffffff);
 	VXD_WR_REG_ABS(reg_base, VLR_OFFSET + PVDEC_FW_FLAGS_OFFSET, flags);
-	/* Do not wait for debug FIFO flag - set it only when requested */
-	VXD_WR_REG_ABS(reg_base, VLR_OFFSET + PVDEC_FW_SIGNATURE_OFFSET,
-		       !ena_params->wait_dbg_fifo);
+	VXD_WR_REG_ABS(reg_base, VLR_OFFSET + PVDEC_FW_SIGNATURE_OFFSET, 0);
 
 	/*
 	 * Clear the bypass bits and enable extended addressing in MMU.
@@ -267,10 +271,12 @@ static void pvdec_prep_fw_upload(const void *dev,
 	reg = 0;
 	reg = VXD_WR_REG_FIELD(reg, MTX_CORE, MTX_SYSC_TIMERDIV, TIMER_EN, 1);
 	/*
-	 * Setting max freq - divide by 1 for better measurement accuracy
-	 * during fw upload stage
+	 * The stock DDK programs the divider once, before the upload, for a 200 MHz core
+	 * (PVDECIO_MTX_CLK_MHZ default) and never changes it; the firmware runs with it.
+	 * The clock measurement during the upload scales the ticks back by this divider.
 	 */
-	reg = VXD_WR_REG_FIELD(reg, MTX_CORE, MTX_SYSC_TIMERDIV, TIMER_DIV, 0);
+	reg = VXD_WR_REG_FIELD(reg, MTX_CORE, MTX_SYSC_TIMERDIV, TIMER_DIV,
+			       PVDEC_CLK_MHZ_DEFAULT - 1);
 	VXD_WR_REG(reg_base, MTX_CORE, MTX_SYSC_TIMERDIV, reg);
 }
 
@@ -590,20 +596,20 @@ static void pvdec_post_boot_setup(const void *dev,
 	VXD_WR_RPT_REG(reg_base, IMG_VIDEO_BUS4_MMU, MMU_TILE_MAX_ADDR,
 		       PVDEC_HEAP_TILE4096_START + PVDEC_HEAP_TILE4096_SIZE - 1, 3);
 
-	/* Disable timer */
-	VXD_WR_REG(reg_base, MTX_CORE, MTX_SYSC_TIMERDIV, 0);
+	/* The MTX timer keeps the stock divider set before the upload (pvdec_prep_fw_upload) */
 
-	reg = 0;
-	if (freq_khz)
-		reg = VXD_WR_REG_FIELD(reg, MTX_CORE, MTX_SYSC_TIMERDIV, TIMER_DIV,
-				       PVDEC_CALC_TIMER_DIV(freq_khz / 1000));
-	else
-		reg = VXD_WR_REG_FIELD(reg, MTX_CORE, MTX_SYSC_TIMERDIV,
-				       TIMER_DIV, PVDEC_CLK_MHZ_DEFAULT - 1);
-
-	/* Enable the MTX timer with final settings */
-	reg = VXD_WR_REG_FIELD(reg, MTX_CORE, MTX_SYSC_TIMERDIV, TIMER_EN, 1);
-	VXD_WR_REG(reg_base, MTX_CORE, MTX_SYSC_TIMERDIV, reg);
+	/*
+	 * Hardware watchdog configuration, as the stock DDK writes it after the upload
+	 * (pvdec_io.c pvdecio_SetWDTConfiguration): front end and back end of pixel pipe 1,
+	 * and the entropy pipe.
+	 */
+	pvdec_select_pipe(reg_base, 1);
+	VXD_WR_REG_ABS(reg_base, PVDEC_PIXEL_OFFSET + PVDEC_HI6250_FE_WDT_CONTROL,
+		       PVDEC_HI6250_FE_WDT_STOCK);
+	VXD_WR_REG_ABS(reg_base, PVDEC_PIXEL_OFFSET + PVDEC_HI6250_BE_WDT_CONTROL,
+		       PVDEC_HI6250_BE_WDT_STOCK);
+	VXD_WR_REG_ABS(reg_base, PVDEC_ENTROPY_OFFSET + PVDEC_HI6250_ENTROPY_WDT_CONTROL,
+		       PVDEC_HI6250_ENTROPY_WDT_STOCK);
 }
 
 static void pvdec_clock_measure(void __iomem *reg_base,
@@ -1378,30 +1384,28 @@ static int pvdec_send_init_msg(const void *dev,
 	struct vxd_dev *vxd;
 	int ret;
 
-#ifdef DEBUG_DECODER_DRIVER
-	dev_dbg(dev, "%s: rendec: %d@0x%x, crc: 0x%x\n", __func__,
-		ena_params->rendec_size, ena_params->rendec_addr, ena_params->crc);
-#endif
-
 	vxd = kzalloc(sizeof(*vxd), GFP_KERNEL);
 	if (!vxd)
-		return -1;
+		return -ENOMEM;
 
-	/* message type */
+	/* message type (size and id are filled in by vxd_pvdec_send_msg()) */
 	msg_wrd = VXD_WR_REG_FIELD(msg_wrd, PVDEC_FW, DEVA_GENMSG, MSG_TYPE,
 				   PVDEC_FW_MSG_TYPE_INIT);
 	VXD_WR_MSG_WRD(msg, PVDEC_FW, DEVA_GENMSG, msg_wrd);
 
+	/* transaction id */
+	VXD_WR_MSG_WRD(msg, PVDEC_FW_DEVA_INIT, TRANS_ID, 0);
+
 	/* rendec address */
 	VXD_WR_MSG_WRD(msg, PVDEC_FW_DEVA_INIT, RENDEC_ADDR0, ena_params->rendec_addr);
 
-	/* rendec size */
+	/* rendec size, in 4 KiB pages */
 	msg_wrd = 0;
 	msg_wrd = VXD_WR_REG_FIELD(msg_wrd, PVDEC_FW, DEVA_INIT, RENDEC_SIZE0,
 				   ena_params->rendec_size);
 	VXD_WR_MSG_WRD(msg, PVDEC_FW_DEVA_INIT, RENDEC_SIZE0, msg_wrd);
 
-	/* HEVC configuration */
+	/* HEVC configuration: no minimum height for dual pipe, never wait (as stock) */
 	msg_wrd = 0;
 	msg_wrd = VXD_WR_REG_FIELD(msg_wrd, PVDEC_FW, DEVA_INIT,
 				   HEVC_CFG_MAX_H_FOR_PIPE_WAIT, 0xFFFF);
@@ -1410,19 +1414,22 @@ static int pvdec_send_init_msg(const void *dev,
 	/* signature select */
 	VXD_WR_MSG_WRD(msg, PVDEC_FW_DEVA_INIT, SIG_SELECT, ena_params->crc);
 
-	/* partial frame notification timer divider */
-	msg_wrd = 0;
-	msg_wrd = VXD_WR_REG_FIELD(msg_wrd, PVDEC_FW, DEVA_INIT, PFNT_DIV, PVDEC_PFNT_DIV);
-	VXD_WR_MSG_WRD(msg, PVDEC_FW_DEVA_INIT, PFNT_DIV, msg_wrd);
-
-	/* firmware watchdog timeout value */
-	msg_wrd = VXD_WR_REG_FIELD(msg_wrd, PVDEC_FW, DEVA_INIT, FWWDT_MS, ena_params->fwwdt_ms);
-	VXD_WR_MSG_WRD(msg, PVDEC_FW_DEVA_INIT, FWWDT_MS, msg_wrd);
-
 	ret = vxd_pvdec_send_msg(dev, reg_base, msg, ARRAY_SIZE(msg), msg_id, vxd);
 	kfree(vxd);
 
 	return ret;
+}
+
+/* One line with the firmware's view of the comms RAM header (boot diagnostics) */
+static void pvdec_dump_comms(const void *dev, void __iomem *reg_base, const char *tag)
+{
+	unsigned int w[PVDEC_FW_STATE_BUF_CFG_OFFSET / 4 + 1];
+
+	pvdec_read_vlr(reg_base, w, ARRAY_SIZE(w), 0);
+	dev_info(dev,
+		 "fw %s: status %08x task %08x id %08x pc %08x msgs %u sig %08x to_host %08x rd %u wr %u to_mtx %08x rd %u wr %u flags %08x state %08x\n",
+		 tag, w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9], w[10],
+		 w[12], w[11], w[13]);
 }
 
 int vxd_pvdec_ena(const void *dev, void __iomem *reg_base,
@@ -1461,9 +1468,12 @@ int vxd_pvdec_ena(const void *dev, void __iomem *reg_base,
 
 	if (ret) {
 		dev_err(dev, "%s: failed to load FW! (%d)", __func__, ret);
+		pvdec_dump_comms(dev, reg_base, "dma FAILED");
 		pvdec_mtx_status_dump(reg_base, NULL);
 		return ret;
 	}
+	/* the MTX timer ticks at core clock / PVDEC_CLK_MHZ_DEFAULT during the upload */
+	*freq_khz *= PVDEC_CLK_MHZ_DEFAULT;
 
 	/* Apply final settings - if any */
 	pvdec_post_boot_setup(dev, reg_base, *freq_khz);
@@ -1471,13 +1481,37 @@ int vxd_pvdec_ena(const void *dev, void __iomem *reg_base,
 	ret = pvdec_poll_fw_boot(reg_base, &ena_params->boot_poll);
 	if (ret) {
 		dev_err(dev, "%s: FW failed to boot! (%d)!\n", __func__, ret);
+		pvdec_dump_comms(dev, reg_base, "boot FAILED");
+		pvdec_mtx_status_dump(reg_base, NULL);
 		return ret;
 	}
+	dev_info(dev, "fw booted: MTX clock %u kHz, MTX RAM %u, core %u bytes\n",
+		 *freq_khz, mtx_ram_size, fw_hdr->core_size);
+	pvdec_dump_comms(dev, reg_base, "ready");
 
 	ret = pvdec_send_init_msg(dev, reg_base, ena_params);
 	if (ret) {
 		dev_err(dev, "%s: failed to send init message! (%d)!\n", __func__, ret);
 		return ret;
+	}
+
+	/* The firmware has consumed the INIT message once its read index meets ours */
+	{
+		unsigned int i, rd = 0, wr = 0;
+
+		for (i = 0; i < 50; i++) {
+			pvdec_read_vlr(reg_base, &rd, 1, PVDEC_FW_TO_MTX_RD_IDX_OFFSET / 4);
+			pvdec_read_vlr(reg_base, &wr, 1, PVDEC_FW_TO_MTX_WR_IDX_OFFSET / 4);
+			if (rd == wr)
+				break;
+			usleep_range(1000, 1100);
+		}
+		pvdec_dump_comms(dev, reg_base, rd == wr ? "init consumed" : "init PENDING");
+		if (vxd_pvdec_check_fw_status(dev, reg_base)) {
+			dev_err(dev, "%s: firmware fatal status after INIT\n", __func__);
+			pvdec_mtx_status_dump(reg_base, NULL);
+			return -EIO;
+		}
 	}
 
 	return 0;

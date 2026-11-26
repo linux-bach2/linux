@@ -58,6 +58,7 @@
 #include "vxd_dec.h"
 #include "img_errors.h"
 #include "vdecdd_utils.h"
+#include "vxd_hi6250.h"
 
 #define VXD_DEC_SPIN_LOCK_NAME  "vxd-dec"
 #define IMG_VXD_DEC_MODULE_NAME "vxd-dec"
@@ -240,30 +241,6 @@ static struct vxd_dec_fmt vxd_dec_formats[] = {
 		.bytes_pp = 1,
 	},
 	{
-		.fourcc = V4L2_PIX_FMT_TI1210,
-		.num_planes = 1,
-		.type = IMG_DEC_FMT_TYPE_CAPTURE,
-		.std = VDEC_STD_UNDEFINED,
-		.pixfmt = IMG_PIXFMT_420PL12YUV10_MSB,
-		.interleave = PIXEL_UV_ORDER,
-		.idc = PIXEL_FORMAT_420,
-		.size_num = 3,
-		.size_den = 2,
-		.bytes_pp = 2,
-	},
-	{
-		.fourcc = V4L2_PIX_FMT_TI1610,
-		.num_planes = 1,
-		.type = IMG_DEC_FMT_TYPE_CAPTURE,
-		.std = VDEC_STD_UNDEFINED,
-		.pixfmt = IMG_PIXFMT_422PL12YUV10_MSB,
-		.interleave = PIXEL_UV_ORDER,
-		.idc = PIXEL_FORMAT_422,
-		.size_num = 2,
-		.size_den = 1,
-		.bytes_pp = 2,
-	},
-	{
 		.fourcc = V4L2_PIX_FMT_H264,
 		.num_planes = 1,
 		.type = IMG_DEC_FMT_TYPE_OUTPUT,
@@ -275,6 +252,7 @@ static struct vxd_dec_fmt vxd_dec_formats[] = {
 		.size_den = 1,
 		.bytes_pp = 1,
 	},
+#ifdef HAS_HEVC
 	{
 		.fourcc = V4L2_PIX_FMT_HEVC,
 		.num_planes = 1,
@@ -287,6 +265,8 @@ static struct vxd_dec_fmt vxd_dec_formats[] = {
 		.size_den = 1,
 		.bytes_pp = 1,
 	},
+#endif
+#ifdef HAS_JPEG
 	{
 		.fourcc = V4L2_PIX_FMT_MJPEG,
 		.num_planes = 1,
@@ -299,6 +279,7 @@ static struct vxd_dec_fmt vxd_dec_formats[] = {
 		.size_den = 1,
 		.bytes_pp = 1,
 	},
+#endif
 	{
 		.fourcc = V4L2_PIX_FMT_YUV420M,
 		.num_planes = 3,
@@ -1099,8 +1080,6 @@ static const struct vb2_ops vxd_dec_video_ops = {
 	.queue_setup = vxd_dec_queue_setup,
 	.buf_prepare = vxd_dec_buf_prepare,
 	.buf_queue = vxd_dec_buf_queue,
-	.wait_prepare = vb2_ops_wait_prepare,
-	.wait_finish = vb2_ops_wait_finish,
 	.start_streaming = vxd_dec_start_streaming,
 	.stop_streaming = vxd_dec_stop_streaming,
 };
@@ -1197,7 +1176,7 @@ static int vxd_dec_open(struct file *file)
 		goto exit;
 	}
 
-	v4l2_fh_add(&ctx->fh);
+	v4l2_fh_add(&ctx->fh, file);
 
 	v4l2_ctrl_handler_init(v4l2_ctrl_hdl, 6);
 	v4l2_ctrl_new_custom(v4l2_ctrl_hdl, &vxd_max_dec_frame_buffering, NULL);
@@ -1238,7 +1217,8 @@ static int vxd_dec_open(struct file *file)
 	for (i = 0; i < MAX_SEGMENTS; i++)
 		lst_add(&ctx->seg_list, &ctx->bstr_segments[i]);
 
-	if (vxd_create_ctx(vxd, ctx))
+	ret = vxd_create_ctx(vxd, ctx);
+	if (ret)
 		goto out_idr_remove;
 
 	ctx->stream.mmu_ctx = ctx->mmu_ctx;
@@ -1273,6 +1253,11 @@ out_idr_remove:
 	idr_remove(vxd->streams, ctx->stream.id);
 
 exit:
+	v4l2_ctrl_handler_free(&ctx->v4l2_ctrl_hdl);
+	if (!IS_ERR_OR_NULL(ctx->fh.m2m_ctx)) {
+		v4l2_fh_del(&ctx->fh, file);
+		v4l2_m2m_ctx_release(ctx->fh.m2m_ctx);
+	}
 	v4l2_fh_exit(&ctx->fh);
 	get_work_buff(ctx->work, TRUE);
 	kfree(ctx->work);
@@ -1350,7 +1335,7 @@ static int vxd_dec_release(struct file *file)
 
 	idr_remove(vxd->streams, ctx->stream.id);
 
-	v4l2_fh_del(&ctx->fh);
+	v4l2_fh_del(&ctx->fh, file);
 
 	v4l2_fh_exit(&ctx->fh);
 
@@ -2092,7 +2077,8 @@ static const struct v4l2_m2m_ops m2m_ops = {
 };
 
 static const struct of_device_id vxd_dec_of_match[] = {
-	{.compatible = "img,d5500-vxd"},
+	/* PVDEC 7.8.3 with the 2016 IMG DDK firmware ABI (stock pvdec_full_bin.fw) */
+	{ .compatible = "hisilicon,hi6250-vdec" },
 	{ /* end */},
 };
 MODULE_DEVICE_TABLE(of, vxd_dec_of_match);
@@ -2101,22 +2087,15 @@ static int vxd_dec_probe(struct platform_device *pdev)
 {
 	struct vxd_dev *vxd;
 	struct resource *res;
-	const struct of_device_id *of_dev_id;
 	int ret;
 	int module_irq;
 	struct video_device *vfd;
 
 	struct heap_config *heap_configs;
 	int num_heaps;
-	unsigned int i_heap_id;
+	int i_heap_id;
 	/* Protect structure fields */
 	spinlock_t **lock;
-
-	of_dev_id = of_match_device(vxd_dec_of_match, &pdev->dev);
-	if (!of_dev_id) {
-		dev_err(&pdev->dev, "%s: Unable to match device\n", __func__);
-		return -ENODEV;
-	}
 
 	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(40));
 	if (ret) {
@@ -2133,16 +2112,20 @@ static int vxd_dec_probe(struct platform_device *pdev)
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	vxd->reg_base = devm_ioremap_resource(&pdev->dev, res);
-	if (IS_ERR_VALUE((unsigned long)vxd->reg_base))
-		return (long)(vxd->reg_base);
+	if (IS_ERR(vxd->reg_base))
+		return PTR_ERR(vxd->reg_base);
 
 	module_irq = platform_get_irq(pdev, 0);
 	if (module_irq < 0)
-		return -ENXIO;
+		return module_irq;
 	vxd->module_irq = module_irq;
-#ifdef ERROR_RECOVERY_SIMULATION
-	g_module_irq = module_irq;
-#endif
+
+	vxd->hi6250 = vxd_hi6250_probe(&pdev->dev);
+	if (IS_ERR(vxd->hi6250))
+		return PTR_ERR(vxd->hi6250);
+
+	vxd->fw_name = "pvdec_full_bin.fw";
+	of_property_read_string(pdev->dev.of_node, "firmware-name", &vxd->fw_name);
 
 	heap_configs = vxd_dec_heap_configs;
 	num_heaps = ARRAY_SIZE(vxd_dec_heap_configs);
@@ -2154,38 +2137,48 @@ static int vxd_dec_probe(struct platform_device *pdev)
 	mutex_init(vxd->mutex);
 
 	vxd->mutex_queue = kzalloc(sizeof(*vxd->mutex_queue), GFP_KERNEL);
-	if (!vxd->mutex_queue)
-		return -ENOMEM;
+	if (!vxd->mutex_queue) {
+		ret = -ENOMEM;
+		goto exit;
+	}
 
 	mutex_init(vxd->mutex_queue);
 
 	platform_set_drvdata(pdev, vxd);
 
+	/*
+	 * The decoder domain is powered only while the hardware is in use (firmware booted for
+	 * an open stream, see vxd_make_hw_on_locked()), and here, to read its properties.
+	 */
 	pm_runtime_enable(&pdev->dev);
-	ret = pm_runtime_get_sync(&pdev->dev);
+	ret = pm_runtime_resume_and_get(&pdev->dev);
 	if (ret < 0) {
-		dev_err(&pdev->dev, "%s: failed to enable clock, status = %d\n", __func__, ret);
+		dev_err(&pdev->dev, "%s: failed to power the decoder, status = %d\n", __func__, ret);
 		goto exit;
 	}
 
 	/* Read HW properties */
 	ret = vxd_pvdec_get_props(vxd->dev, vxd->reg_base, &vxd->props);
+	pm_runtime_put_sync(&pdev->dev);
 	if (ret) {
 		dev_err(&pdev->dev, "%s: failed to fetch core properties!\n", __func__);
 		ret = -ENXIO;
-		goto out_put_sync;
+		goto exit;
 	}
 	vxd->mmu_config_addr_width = VXD_EXTRN_ADDR_WIDTH(vxd->props);
-#ifdef DEBUG_DECODER_DRIVER
-	dev_info(&pdev->dev, "hw:%u.%u.%u, num_pix: %d, num_ent: %d, mmu: %d, MTX RAM: %d\n",
+	dev_info(&pdev->dev,
+		 "PVDEC hw %u.%u.%u core_id %08x, pix pipes %d, ent pipes %d, mmu %d-bit (cfg0 %08x cfg1 %08x), MTX RAM %u, pipe1 cfg %08x misc %08x, max frame %08x, dbg fifo %u\n",
 		 VXD_MAJ_REV(vxd->props),
 		 VXD_MIN_REV(vxd->props),
 		 VXD_MAINT_REV(vxd->props),
+		 vxd->props.pvdec_core_id,
 		 VXD_NUM_PIX_PIPES(vxd->props),
 		 VXD_NUM_ENT_PIPES(vxd->props),
 		 VXD_EXTRN_ADDR_WIDTH(vxd->props),
-		 vxd->props.mtx_ram_size);
-#endif
+		 vxd->props.mmu_config0, vxd->props.mmu_config1,
+		 vxd->props.mtx_ram_size,
+		 vxd->props.pixel_pipe_cfg[0], vxd->props.pixel_misc_cfg[0],
+		 vxd->props.pixel_max_frame_cfg, vxd->props.dbg_fifo_size);
 
 	INIT_LIST_HEAD(&vxd->msgs);
 	INIT_LIST_HEAD(&vxd->pend);
@@ -2195,7 +2188,7 @@ static int vxd_dec_probe(struct platform_device *pdev)
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to initialize memory\n");
 		ret = -ENOMEM;
-		goto out_put_sync;
+		goto exit;
 	}
 	vxd->streams = kzalloc(sizeof(*vxd->streams), GFP_KERNEL);
 	if (!vxd->streams) {
@@ -2215,6 +2208,7 @@ static int vxd_dec_probe(struct platform_device *pdev)
 	i_heap_id = vxd_g_internal_heap_id();
 	if (i_heap_id < 0) {
 		dev_err(&pdev->dev, "%s: Invalid internal heap id", __func__);
+		ret = -EINVAL;
 		goto out_vxd_init;
 	}
 	ret = core_initialise(vxd, i_heap_id, vxd_return_resource);
@@ -2233,47 +2227,20 @@ static int vxd_dec_probe(struct platform_device *pdev)
 	vxd->hw_pm_delay = 1000;
 	vxd->hw_dwr_period = 1000;
 #endif
-	ret = vxd_prepare_fw(vxd);
-	if (ret) {
-		dev_err(&pdev->dev, "%s fw acquire failed!", __func__);
-		goto out_core_init;
-	}
+	/* The firmware is requested at the first open (it lives on the root filesystem). */
 
-	if (vxd->no_fw) {
-		dev_err(&pdev->dev, "%s fw acquire failed!", __func__);
-		goto out_core_init;
-	}
-
-	 lock = (spinlock_t **)&vxd->lock;
+	lock = (spinlock_t **)&vxd->lock;
 	*lock = kzalloc(sizeof(spinlock_t), GFP_KERNEL);
 
 	if (!(*lock)) {
-		pr_err("Memory allocation failed for spin-lock\n");
-		ret = ENOMEM;
+		ret = -ENOMEM;
 		goto out_core_init;
 	}
 	spin_lock_init(*lock);
 
 	ret = v4l2_device_register(&pdev->dev, &vxd->v4l2_dev);
 	if (ret)
-		goto out_clean_fw;
-
-#ifdef ERROR_RECOVERY_SIMULATION
-	/*
-	 * create a sysfs entry here, to debug firmware error recovery.
-	 */
-	vxd_dec_kobject = kobject_create_and_add("vxd_decoder", kernel_kobj);
-	if (!vxd_dec_kobject) {
-		dev_err(&pdev->dev, "Failed to create kernel object\n");
-		goto out_clean_fw;
-	}
-
-	ret = sysfs_create_group(vxd_dec_kobject, &attr_group);
-	if (ret) {
-		dev_err(&pdev->dev, "Failed to create sysfs files\n");
-		kobject_put(vxd_dec_kobject);
-	}
-#endif
+		goto out_core_init;
 
 	vfd = video_device_alloc();
 	if (!vfd) {
@@ -2295,8 +2262,9 @@ static int vxd_dec_probe(struct platform_device *pdev)
 	vxd->vfd_dec = vfd;
 	video_set_drvdata(vfd, vxd);
 
+	/* The handlers touch the registers only while the hardware is on (vxd->hw_on). */
 	ret = devm_request_threaded_irq(&pdev->dev, module_irq, (irq_handler_t)hard_isrcb,
-					(irq_handler_t)soft_thread_irq, IRQF_SHARED,
+					(irq_handler_t)soft_thread_irq, 0,
 					IMG_VXD_DEC_MODULE_NAME, pdev);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to request irq\n");
@@ -2304,9 +2272,9 @@ static int vxd_dec_probe(struct platform_device *pdev)
 	}
 
 	vxd->m2m_dev = v4l2_m2m_init(&m2m_ops);
-	if (IS_ERR_VALUE((unsigned long)vxd->m2m_dev)) {
+	if (IS_ERR(vxd->m2m_dev)) {
 		dev_err(&pdev->dev, "Failed to init mem2mem device\n");
-		ret = -EINVAL;
+		ret = PTR_ERR(vxd->m2m_dev);
 		goto out_vid_dev;
 	}
 
@@ -2315,7 +2283,8 @@ static int vxd_dec_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Failed to register video device\n");
 		goto out_vid_reg;
 	}
-	v4l2_info(&vxd->v4l2_dev, "decoder registered as /dev/video%d\n", vfd->num);
+	v4l2_info(&vxd->v4l2_dev, "decoder registered as /dev/video%d (firmware %s, loaded at first open)\n",
+		  vfd->num, vxd->fw_name);
 
 	return 0;
 
@@ -2327,9 +2296,6 @@ out_vid_dev:
 
 out_v4l2_device:
 	v4l2_device_unregister(&vxd->v4l2_dev);
-
-out_clean_fw:
-	vxd_clean_fw_resources(vxd);
 
 out_core_init:
 	core_deinitialise();
@@ -2344,11 +2310,12 @@ out_idr_init:
 out_init:
 	img_mem_exit();
 
-out_put_sync:
-	pm_runtime_put_sync(&pdev->dev);
-
 exit:
 	pm_runtime_disable(&pdev->dev);
+	if (vxd->mutex_queue) {
+		mutex_destroy(vxd->mutex_queue);
+		kfree(vxd->mutex_queue);
+	}
 	mutex_destroy(vxd->mutex);
 	kfree(vxd->mutex);
 	vxd->mutex = NULL;
@@ -2356,9 +2323,13 @@ exit:
 	return ret;
 }
 
-static int vxd_dec_remove(struct platform_device *pdev)
+static void vxd_dec_remove(struct platform_device *pdev)
 {
 	struct vxd_dev *vxd = platform_get_drvdata(pdev);
+
+	video_unregister_device(vxd->vfd_dec);
+	v4l2_m2m_release(vxd->m2m_dev);
+	v4l2_device_unregister(&vxd->v4l2_dev);
 
 	core_deinitialise();
 
@@ -2367,10 +2338,9 @@ static int vxd_dec_remove(struct platform_device *pdev)
 	idr_destroy(vxd->streams);
 	kfree(vxd->streams);
 	get_delayed_work_buff(&vxd->dwork, TRUE);
-	kfree(&vxd->lock);
+	kfree(vxd->lock);
 	img_mem_exit();
 
-	pm_runtime_put_sync(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
 	kfree(vxd->dwork);
 	mutex_destroy(vxd->mutex);
@@ -2379,28 +2349,42 @@ static int vxd_dec_remove(struct platform_device *pdev)
 	kfree(vxd->mutex_queue);
 	vxd->mutex = NULL;
 	vxd->mutex_queue = NULL;
-
-	video_unregister_device(vxd->vfd_dec);
-	v4l2_m2m_release(vxd->m2m_dev);
-	v4l2_device_unregister(&vxd->v4l2_dev);
-
-	return 0;
 }
 
-static int __maybe_unused vxd_dec_suspend(struct device *dev)
+static int vxd_dec_runtime_suspend(struct device *dev)
 {
-	int ret = 0;
+	struct vxd_dev *vxd = dev_get_drvdata(dev);
+
+	return vxd_hi6250_power_off(vxd->hi6250);
+}
+
+static int vxd_dec_runtime_resume(struct device *dev)
+{
+	struct vxd_dev *vxd = dev_get_drvdata(dev);
+
+	return vxd_hi6250_power_on(vxd->hi6250);
+}
+
+static int vxd_dec_suspend(struct device *dev)
+{
+	int ret;
 
 	ret = vxd_suspend_dev(dev);
-	if (ret)
+	if (ret) {
 		dev_err(dev, "failed to suspend core hw!\n");
+		return ret;
+	}
 
-	return ret;
+	return pm_runtime_force_suspend(dev);
 }
 
-static int __maybe_unused vxd_dec_resume(struct device *dev)
+static int vxd_dec_resume(struct device *dev)
 {
-	int ret = 0;
+	int ret;
+
+	ret = pm_runtime_force_resume(dev);
+	if (ret)
+		return ret;
 
 	ret = vxd_resume_dev(dev);
 	if (ret)
@@ -2409,15 +2393,17 @@ static int __maybe_unused vxd_dec_resume(struct device *dev)
 	return ret;
 }
 
-static UNIVERSAL_DEV_PM_OPS(vxd_dec_pm_ops,
-	vxd_dec_suspend, vxd_dec_resume, NULL);
+static const struct dev_pm_ops vxd_dec_pm_ops = {
+	SYSTEM_SLEEP_PM_OPS(vxd_dec_suspend, vxd_dec_resume)
+	RUNTIME_PM_OPS(vxd_dec_runtime_suspend, vxd_dec_runtime_resume, NULL)
+};
 
 static struct platform_driver vxd_dec_driver = {
 	.probe = vxd_dec_probe,
 	.remove = vxd_dec_remove,
 	.driver = {
 		.name = "img_dec",
-		.pm = &vxd_dec_pm_ops,
+		.pm = pm_ptr(&vxd_dec_pm_ops),
 		.of_match_table = vxd_dec_of_match,
 	},
 };
@@ -2425,4 +2411,5 @@ module_platform_driver(vxd_dec_driver);
 
 MODULE_AUTHOR("Prashanth Kumar Amai <prashanth.ka@pathpartnertech.com> Sidraya Jayagond <sidraya.bj@pathpartnertech.com>");
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("IMG D5520 video decoder driver");
+MODULE_DESCRIPTION("IMG VXD (PVDEC) video decoder driver");
+MODULE_FIRMWARE("pvdec_full_bin.fw");

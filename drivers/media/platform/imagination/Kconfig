@@ -12,3 +12,20 @@ config VIDEO_E5010_JPEG_ENC
 	  which supports JPEG and MJPEG baseline encoding of YUV422 and YUV420
 	  semiplanar video formats, with resolution ranging from 64x64 to 8K x 8K
 	  pixels. The module will be named as e5010_jpeg_enc.
+
+config VIDEO_IMG_VXD_DEC
+	tristate "Imagination VXD (PVDEC D5500/D5520) video decoder"
+	depends on VIDEO_DEV
+	depends on V4L_MEM2MEM_DRIVERS
+	depends on ARCH_HISI || ARCH_K3 || COMPILE_TEST
+	depends on ARM64
+	depends on MFD_SYSCON
+	select VIDEOBUF2_DMA_CONTIG
+	select VIDEOBUF2_DMA_SG
+	select V4L2_MEM2MEM_DEV
+	help
+	  Stateful V4L2 mem2mem driver for the Imagination PowerVR video
+	  decoder (PVDEC/VXD), with the bitstream header parser in the
+	  kernel. Derived from TI's vxd-dec (D5520); supports the HiSilicon
+	  Hi6250 PVDEC (D5500) with its stock MTX firmware
+	  (pvdec_full_bin.fw, not distributed). The module is vxd-dec.
