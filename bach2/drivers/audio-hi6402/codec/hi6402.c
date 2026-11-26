@@ -4122,7 +4122,12 @@ static void hi6402_init_chip(struct snd_soc_codec *codec)
 		 * TFA9894s' TDM sinks get zero data (LA=1 on all four amps, tone or silence). Codes 0-3 let the audio through
 		 * (LA=0 on 0x35/0x36 during a tone only, LA=1 in silence; the user heard the beeps). Code 3 (0x30) is used.
 		 */
-		snd_soc_write(codec, HI6402_S4_PORT_CFG_H, 0x30);
+		/*
+		 * 2026-11-26 (touch-t4, docs/mainline-amps.md section 28): 0x30 clears bit 6 and the amps then play about
+		 * +48 dB too loud (misaligned bits: -60 dBFS was loud). Back to the vendor/idle value 0x70 (word length 3 +
+		 * bit 6, as every other port); whether the amps get data at 0x70 is untested at a safe level. Amps stay off.
+		 */
+		snd_soc_write(codec, HI6402_S4_PORT_CFG_H, 0x70);
 	} else {
 		snd_soc_write(codec, HI6402_S4_PORT_CFG_H, 0x40);
 	}
