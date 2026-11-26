@@ -37,6 +37,8 @@ extern "C" {
 #include "plat_exception_rst.h"
 #endif
 #include "plat_pm.h"
+#include "plat_pm_wlan.h"
+void wlan_pm_sleep_work(oal_work_stru *pst_worker);	/* bach2: plat_pm_wlan.c */
 
 #include "oam_ext_if.h"
 #undef  THIS_FILE_ID
@@ -2260,6 +2262,24 @@ OAL_STATIC oal_int32 oal_sdio_suspend(struct device *dev)
     if (sdio_get_host_pm_caps(func) & MMC_PM_KEEP_POWER)
     {
         sdio_set_host_pm_flags(func, MMC_PM_KEEP_POWER);
+    }
+
+    /*
+     * bach2 (docs/mainline-suspend.md "Wi-Fi and suspend"): on Android a held wakelock keeps the system out of
+     * suspend, so this check never fired there. Mainline suspends on request (rtcwake), and the Hi1102 holds its
+     * wakelock whenever it is awake (cycle 6: "Already wake up", suspend refused). Run the vendor's own sleep
+     * handshake (sleep request -> device ack -> sleep command -> wake_unlock) first, then check as before.
+     */
+    if (oal_sdio_wakelock_active(hi_sdio))
+    {
+        struct wlan_pm_s *pm = wlan_pm_get_drv();
+
+        if (pm != NULL && pm->ul_wlan_pm_enable && pm->ul_wlan_dev_state != HOST_ALLOW_TO_SLEEP)
+        {
+            wlan_pm_sleep_work(NULL);
+        }
+        OAL_IO_PRINT(KERN_ERR"bach2: wifi sleep before suspend: dev_state %lu wakelock %lu\n",
+                     pm ? (unsigned long)pm->ul_wlan_dev_state : 99UL, hi_sdio->st_sdio_wakelock.lock_count);
     }
 
     if (down_interruptible(&sdio_wake_sema))
