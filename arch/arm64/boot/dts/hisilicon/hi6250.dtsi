@@ -288,6 +288,32 @@
 		};
 	};
 
+	/*
+	 * The lower four of the stock GPU OPPs (live DT mali@E8970000 operating-points: 120 to 900
+	 * MHz; the stub clock's GPU table). Capped at 480 MHz while there is no GPU thermal zone.
+	 * No opp-microvolt: the AP has no GPU regulator, LPM3 sets the voltage of each OPP itself
+	 * (stock: 696/698/700/744 mV for these four).
+	 */
+	gpu_opp: opp-table-gpu {
+		compatible = "operating-points-v2";
+
+		opp-120000000 {
+			opp-hz = /bits/ 64 <120000000>;
+		};
+
+		opp-240000000 {
+			opp-hz = /bits/ 64 <240000000>;
+		};
+
+		opp-360000000 {
+			opp-hz = /bits/ 64 <360000000>;
+		};
+
+		opp-480000000 {
+			opp-hz = /bits/ 64 <480000000>;
+		};
+	};
+
 	gic: interrupt-controller@e82b0000 {
 		compatible = "arm,cortex-a9-gic";
 		reg = <0x0 0xe82b1000 0x0 0x1000>,	/* GICD */
@@ -528,8 +554,8 @@
 
 		/*
 		 * Mali-T830 MP2 r1p0 (stock mali@E8970000, vendor kbase "Mali-T83x 2 cores r1p0").
-		 * Power: LPM3 "g3d" domain; clock: LPM3 DVFS through the stub clock (no OPP table
-		 * yet: no frequency request is made).
+		 * Power: LPM3 "g3d" domain; clock: LPM3 DVFS through the stub clock (requests
+		 * {0x0003030A, MHz} on mailbox 13, read back from SCBAKDATA4 bits 12-15).
 		 */
 		gpu: gpu@e8970000 {
 			compatible = "hisilicon,hi6250-mali", "arm,mali-t830";
@@ -540,6 +566,7 @@
 			interrupt-names = "job", "mmu", "gpu";
 			clocks = <&stub_clock HI6250_CLK_STUB_GPU>;
 			power-domains = <&lpm3_pd HI6250_LPM3_PD_G3D>;
+			operating-points-v2 = <&gpu_opp>;
 			status = "disabled";
 		};
 
