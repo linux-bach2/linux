@@ -2270,16 +2270,30 @@ OAL_STATIC oal_int32 oal_sdio_suspend(struct device *dev)
      * wakelock whenever it is awake (cycle 6: "Already wake up", suspend refused). Run the vendor's own sleep
      * handshake (sleep request -> device ack -> sleep command -> wake_unlock) first, then check as before.
      */
+    /*
+     * W-S1 (cycle 29): cfg80211's suspend disconnects (no WoWLAN) at the same time, and while that
+     * disassociation runs the device forbids sleep ("device forbid sleep 3"). Retry for up to ~1 s.
+     */
     if (oal_sdio_wakelock_active(hi_sdio))
     {
         struct wlan_pm_s *pm = wlan_pm_get_drv();
+        int tries = 0;
 
-        if (pm != NULL && pm->ul_wlan_pm_enable && pm->ul_wlan_dev_state != HOST_ALLOW_TO_SLEEP)
+        while (pm != NULL && pm->ul_wlan_pm_enable && oal_sdio_wakelock_active(hi_sdio) && tries < 20)
         {
-            wlan_pm_sleep_work(NULL);
+            if (pm->ul_wlan_dev_state != HOST_ALLOW_TO_SLEEP)
+            {
+                wlan_pm_sleep_work(NULL);
+            }
+            if (!oal_sdio_wakelock_active(hi_sdio))
+            {
+                break;
+            }
+            msleep(50);
+            tries++;
         }
-        OAL_IO_PRINT(KERN_ERR"bach2: wifi sleep before suspend: dev_state %lu wakelock %lu\n",
-                     pm ? (unsigned long)pm->ul_wlan_dev_state : 99UL, hi_sdio->st_sdio_wakelock.lock_count);
+        OAL_IO_PRINT(KERN_ERR"bach2: wifi sleep before suspend: dev_state %lu wakelock %lu tries %d\n",
+                     pm ? (unsigned long)pm->ul_wlan_dev_state : 99UL, hi_sdio->st_sdio_wakelock.lock_count, tries);
     }
 
     if (down_interruptible(&sdio_wake_sema))
