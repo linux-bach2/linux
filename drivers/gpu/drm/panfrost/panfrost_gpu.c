@@ -114,6 +114,17 @@ void panfrost_gpu_amlogic_quirk(struct panfrost_device *pfdev)
 	gpu_write(pfdev, GPU_PWR_OVERRIDE1, 0xfff | (0x20 << 16));
 }
 
+void panfrost_gpu_hi6250_quirk(struct panfrost_device *pfdev)
+{
+	/*
+	 * The HiSilicon Hi6250 (Kirin 659) Mali-T830 r1p0: the vendor kbase
+	 * (platform/hisilicon, KBASE_FEATURE_HI0004) sets this undocumented
+	 * GPU_PWR_OVERRIDE1 value after every power-on.
+	 */
+	gpu_write(pfdev, GPU_PWR_KEY, GPU_PWR_KEY_UNLOCK);
+	gpu_write(pfdev, GPU_PWR_OVERRIDE1, 0xc4b00960);
+}
+
 static void panfrost_gpu_init_quirks(struct panfrost_device *pfdev)
 {
 	u32 quirks = 0;

@@ -47,6 +47,7 @@ properties:
           - const: arm,mali-t760
       - items:
           - enum:
+              - hisilicon,hi6250-mali
               - samsung,exynos7870-mali
           - const: arm,mali-t830
       - items:
