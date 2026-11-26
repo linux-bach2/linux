@@ -53,7 +53,8 @@
 #define HI6402_FORMATS	( SNDRV_PCM_FMTBIT_S16_LE | \
 			  SNDRV_PCM_FMTBIT_S16_BE | \
 			  SNDRV_PCM_FMTBIT_S24_LE | \
-			  SNDRV_PCM_FMTBIT_S24_BE )
+			  SNDRV_PCM_FMTBIT_S24_BE | \
+			  SNDRV_PCM_FMTBIT_S32_LE )
 
 #define HI6402_RATES SNDRV_PCM_RATE_8000_96000
 
@@ -4118,17 +4119,12 @@ static void hi6402_init_chip(struct snd_soc_codec *codec)
 	/* under stereo smartpa , set the I2S4 port to 24bit */
 	if (priv->board_cfg.use_stereo_smartpa) {
 		/*
-		 * bach2 A10/A11 (docs/mainline-amps.md sections 23-24) [V]: with the vendor's 0x70 (word-length code 7) the
-		 * TFA9894s' TDM sinks get zero data (LA=1 on all four amps, tone or silence). Codes 0-3 let the audio through
-		 * (LA=0 on 0x35/0x36 during a tone only, LA=1 in silence; the user heard the beeps). Code 3 (0x30) is used.
+		 * bach2 A18 (docs/mainline-amps.md section 32) [V]: stock 0x70 (TX_CLK_SEL=1, 24-bit) is correct.
+		 * Earlier runs fed right-justified S24_LE into a left-justified (S32_LE) SLIMbus FIFO (-48 dB),
+		 * which left 0x70 below the amps' LA/room floor while 0x30 misaligned BCLK by 1 bit and corrupted
+		 * negative samples into a full-scale square wave. With S32_LE + 0x70, 1 kHz THD is -62.8 dB.
 		 */
-		/*
-		 * bach2 (docs/mainline-amps.md sections 23-30): bit 6 of PORT_CFG_H is TX_CLK_SEL (the BCLK edge S4 drives data
-		 * on), not part of the word length (bits 4-5). With the vendor 0x70 the TFA9894s sample on the wrong edge and
-		 * get no usable data (LA=1 at -40 dBFS; nothing audible at -80 dBFS, user 2026-11-26). 0x30 (24-bit, the
-		 * other edge) feeds them correctly; the level is set by the amps' VOL attenuation (tfa98xx-bach2 atten_db).
-		 */
-		snd_soc_write(codec, HI6402_S4_PORT_CFG_H, 0x30);
+		snd_soc_write(codec, HI6402_S4_PORT_CFG_H, 0x70);
 	} else {
 		snd_soc_write(codec, HI6402_S4_PORT_CFG_H, 0x40);
 	}

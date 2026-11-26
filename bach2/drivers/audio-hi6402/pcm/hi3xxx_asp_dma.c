@@ -256,10 +256,10 @@ static const struct snd_pcm_hardware hi3xxx_asp_dmac_hardware = {
 	.info			= SNDRV_PCM_INFO_MMAP |
 				  SNDRV_PCM_INFO_MMAP_VALID |
 				  SNDRV_PCM_INFO_INTERLEAVED,
-	/* C5g [V]: the SLIMbus play track is 24-bit and each port takes one 32-bit FIFO word per frame, so packed
-	 * S16 drains at 2x. Only 24-bit samples in 32-bit containers play at real time; S16 users go through
-	 * plughw or a converting GStreamer sink. */
-	.formats		= SNDRV_PCM_FMTBIT_S24_LE,
+	/* C5g & A18 [V]: the SLIMbus play/capture ports transfer 24-bit samples left-justified in bits 31..8 of
+	 * each 32-bit FIFO word (low byte 0x00). Advertise S32_LE so ALSA plug/GStreamer align the MSB to bit 31
+	 * (S24_LE puts data in bits 23..0, losing 48.2 dB on playback). */
+	.formats		= SNDRV_PCM_FMTBIT_S32_LE,
 	/* The SLIMbus play track and the DMA run at 48 kHz only. Without these limits ALSA accepted the UI's 8 kHz PCMU
 	 * as-is, so it played ~6x too fast and the period checks fired every 3 ms (A6, cycle 18 [V]). */
 	.rates			= SNDRV_PCM_RATE_48000,
@@ -279,10 +279,10 @@ static const struct snd_pcm_hardware hi3xxx_asp_dmac_hardware_planar = {
 	.info			= SNDRV_PCM_INFO_MMAP |
 				  SNDRV_PCM_INFO_MMAP_VALID |
 				  SNDRV_PCM_INFO_NONINTERLEAVED,
-	/* C5g [V]: the SLIMbus play track is 24-bit and each port takes one 32-bit FIFO word per frame, so packed
-	 * S16 drains at 2x. Only 24-bit samples in 32-bit containers play at real time; S16 users go through
-	 * plughw or a converting GStreamer sink. */
-	.formats		= SNDRV_PCM_FMTBIT_S24_LE,
+	/* C5g & A18 [V]: the SLIMbus play/capture ports transfer 24-bit samples left-justified in bits 31..8 of
+	 * each 32-bit FIFO word (low byte 0x00). Advertise S32_LE so ALSA plug/GStreamer align the MSB to bit 31
+	 * (S24_LE puts data in bits 23..0, losing 48.2 dB on playback). */
+	.formats		= SNDRV_PCM_FMTBIT_S32_LE,
 	/* The SLIMbus play track and the DMA run at 48 kHz only. Without these limits ALSA accepted the UI's 8 kHz PCMU
 	 * as-is, so it played ~6x too fast and the period checks fired every 3 ms (A6, cycle 18 [V]). */
 	.rates			= SNDRV_PCM_RATE_48000,

@@ -43,9 +43,8 @@ static char *fw_name = "tfa98xx/BACH2-NXP_GK_GK_GK_GK.cnt";
 module_param(fw_name, charp, 0444);
 MODULE_PARM_DESC(fw_name, "container file under /lib/firmware");
 /*
- * docs/mainline-amps.md section 30: without Android's volume attenuation the amps run at the container's full MUSIC gain
- * (-60 dBFS was loud). atten_db is added to the vstep's VOL attenuation after every start (0.5 dB steps, VOL max
- * 254 = -127 dB; 255 = mute). Default 30 dB; the UI's software volume sits on top.
+ * Optional extra hardware attenuation added to the vstep's VOL after every start (0.5 dB steps, VOL max 254 = -127 dB;
+ * 255 = mute). Default 0 (stock container MUSIC vstep); A18 proved the earlier loudness was S4 0x30 BCLK misalignment.
  */
 /*
  * Section 31: TDM receive-format overrides, applied after the start with TDME off/on (-1 = keep the container's).
@@ -59,9 +58,9 @@ module_param(tdm_clinv, int, 0444);
 MODULE_PARM_DESC(tdm_ssize, "TDMSSIZE override (sample bits - 1, e.g. 23), -1 = container");
 MODULE_PARM_DESC(tdm_adj, "TDMADJ override (0/1), -1 = container");
 MODULE_PARM_DESC(tdm_clinv, "TDMCLINV override (0/1), -1 = container");
-static int atten_db = 30;
+static int atten_db = 0;
 module_param(atten_db, int, 0444);
-MODULE_PARM_DESC(atten_db, "extra amplifier attenuation in dB on top of the container vstep (0..127, default 30)");
+MODULE_PARM_DESC(atten_db, "extra amplifier attenuation in dB on top of the container vstep (0..127, default 0)");
 
 struct tfa98xx_bach2 {
 	struct i2c_client *i2c;

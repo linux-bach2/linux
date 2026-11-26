@@ -24,23 +24,23 @@ static struct snd_soc_dai_driver bach2_slimbus_dai = {
 	.playback = {
 		.stream_name = "SLIMbus Playback",
 		/*
-		 * touch-t4 (2026-11-26) [V]: soc-pcm takes rates/channels/formats from the DAIs, not from the platform's
-		 * hardware struct, so with 8k-384k here the UI's 8 kHz PCMU opened the 48 kHz-only SLIMbus track at 8000 Hz
-		 * (played ~6x fast, underruns: "broken" sound). Advertise exactly what the track does.
+		 * touch-t4 & A18 (2026-11-26) [V]: soc-pcm takes rates/channels/formats from the DAIs. The SLIMbus
+		 * playback/capture ports take 24-bit samples left-justified in bits 31..8 of each 32-bit FIFO word
+		 * (low byte 0x00), which matches ALSA S32_LE (S24_LE puts data in bits 23..0, attenuating by 48 dB).
 		 */
 		.channels_min = 2,
 		.channels_max = 2,
 		.rates = SNDRV_PCM_RATE_48000,
-		.formats = SNDRV_PCM_FMTBIT_S24_LE,
+		.formats = SNDRV_PCM_FMTBIT_S32_LE,
 	},
-	/* A7: the mic uplink (stock media-main-mic: ADC0 -> S1 OL/OR -> SLIMbus capture track, activated
-	 * by the codec's "AUDIO CAPTURE SWITCH" DAPM event); the ASP DMA reads dports 2/3 (ch 7/8). */
+	/* A7/A18: the mic uplink (stock media-main-mic: ADC0 -> S1 OL/OR -> SLIMbus capture track, activated
+	 * by the codec's "AUDIO CAPTURE SWITCH" DAPM event); the ASP DMA reads dports 2/3 (ch 7/8) left-justified. */
 	.capture = {
 		.stream_name = "SLIMbus Capture",
 		.channels_min = 2,
 		.channels_max = 2,
 		.rates = SNDRV_PCM_RATE_48000,
-		.formats = SNDRV_PCM_FMTBIT_S24_LE,
+		.formats = SNDRV_PCM_FMTBIT_S32_LE,
 	},
 	.ops = &bach2_slimbus_dai_ops,
 };
