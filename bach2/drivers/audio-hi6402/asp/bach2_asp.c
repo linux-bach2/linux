@@ -15,6 +15,12 @@
  * channel": after LPM3's auto-ack the channel is not IDLE until the next send clears the ACK), so
  * hi6402_e2.ko must not be loaded together with this module.
  *
+ * Mailbox 14 is also the GPU's (LPM3 G3D power domain, hi6250-lpm3-pd, built in). When this node has
+ * "hisilicon,lpm3 = <&lpm3_pd>" and that provider is enabled, the same words go through the
+ * provider's channel (hi6250_lpm3_send: same channel arguments, same send + txdone, messages
+ * serialized with the GPU's) and this module does not request the mailbox itself. Without the
+ * property, or with the provider disabled, it owns "mboxes" as before.
+ *
  * The regulator enable only reports success once LPM3 has also released the ASP isolation, bus
  * resets and gates (SCISOSTAT b0 = 0, SCPERRSTSTAT0 b7-10 = 0, SCPERSTAT1 b0-3 = 0xf): the first
  * ASP_CFG access by the SLIMbus driver happens after this enable and must not hit a dead bus.
@@ -28,6 +34,14 @@
 #include <linux/platform_device.h>
 #include <linux/regulator/driver.h>
 #include <linux/regulator/machine.h>
+/* Kernels without proposed 0154 lack the shared-mailbox API: then this module always owns mailbox 14. */
+#if __has_include(<linux/soc/hisilicon/hi6250-lpm3.h>)
+#include <linux/soc/hisilicon/hi6250-lpm3.h>
+#else
+struct hi6250_lpm3;
+static inline struct hi6250_lpm3 *hi6250_lpm3_get(struct device *dev) { return ERR_PTR(-ENODEV); }
+static inline int hi6250_lpm3_send(struct hi6250_lpm3 *lpm3, u32 *msg) { return -ENODEV; }
+#endif
 
 #define SCTRL_BASE	0xfff0a000UL
 #define PMIC_BASE	0xfff34000UL
@@ -49,7 +63,8 @@ struct bach2_asp {
 	void __iomem *sctrl, *pmic;
 	struct mutex lock;
 	struct mbox_client cl;
-	struct mbox_chan *ch;
+	struct mbox_chan *ch;		/* own mailbox 14, or NULL when shared through lpm3 */
+	struct hi6250_lpm3 *lpm3;
 	struct clk_hw aspclk;
 	struct clk_hw_onecell_data *clks;
 };
@@ -69,8 +84,12 @@ static int lpm3_send(struct bach2_asp *a, u32 *msg)
 	int r;
 
 	mutex_lock(&a->lock);
-	r = mbox_send_message(a->ch, msg);
-	mbox_client_txdone(a->ch, 0);
+	if (a->lpm3) {
+		r = hi6250_lpm3_send(a->lpm3, msg);
+	} else {
+		r = mbox_send_message(a->ch, msg);
+		mbox_client_txdone(a->ch, 0);
+	}
 	mutex_unlock(&a->lock);
 	dev_info(a->dev, "lpm3 {0x%08x, 0x%x}: %d\n", msg[0], msg[1], r < 0 ? r : 0);
 	return r < 0 ? r : 0;
@@ -216,15 +235,27 @@ static int bach2_asp_probe(struct platform_device *pdev)
 	a->pmic = devm_ioremap(dev, PMIC_BASE, 0x1000);
 	if (!a->sctrl || !a->pmic)
 		return -ENOMEM;
-	a->cl.dev = dev;
-	a->cl.tx_block = false;
-	a->cl.knows_txdone = true;
-	a->ch = mbox_request_channel(&a->cl, 0);
-	if (IS_ERR(a->ch))
-		return dev_err_probe(dev, PTR_ERR(a->ch), "mailbox 14\n");
-	r = devm_add_action_or_reset(dev, free_chan, a->ch);
-	if (r)
-		return r;
+	a->lpm3 = hi6250_lpm3_get(dev);
+	if (IS_ERR(a->lpm3)) {
+		r = PTR_ERR(a->lpm3);
+		a->lpm3 = NULL;
+		/* -ENOENT: no hisilicon,lpm3; -ENODEV: provider disabled. Then own the mailbox. */
+		if (r != -ENOENT && r != -ENODEV)
+			return dev_err_probe(dev, r, "LPM3 mailbox provider\n");
+	}
+	if (a->lpm3) {
+		dev_info(dev, "mailbox 14 shared through the LPM3 power-domain provider\n");
+	} else {
+		a->cl.dev = dev;
+		a->cl.tx_block = false;
+		a->cl.knows_txdone = true;
+		a->ch = mbox_request_channel(&a->cl, 0);
+		if (IS_ERR(a->ch))
+			return dev_err_probe(dev, PTR_ERR(a->ch), "mailbox 14\n");
+		r = devm_add_action_or_reset(dev, free_chan, a->ch);
+		if (r)
+			return r;
+	}
 
 	rc.dev = dev;
 	rc.driver_data = a;
