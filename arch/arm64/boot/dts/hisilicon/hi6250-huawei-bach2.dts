@@ -533,6 +533,13 @@
 				vccio-supply = <&ldo4>;
 				pinctrl-names = "default";
 				pinctrl-0 = <&touch_reset_pin>;
+				/*
+				 * Touch resume T-R1 (docs/mainline-suspend.md): after i2c-hid's suspend power-down (rails
+				 * off, reset asserted) the ekth5512c never answers again (controller timed out, every
+				 * IOMCU/pad/DW/LDO register unchanged). As a wakeup source, i2c-hid keeps it powered in
+				 * SLEEP over suspend instead, as the stock driver does, and a touch can wake the tablet.
+				 */
+				wakeup-source;
 			};
 		};
 
