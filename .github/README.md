@@ -18,9 +18,11 @@ Kirin 659 (`hi6250`), 8x Cortex-A53, 3 GB RAM, 1200x1920 panel. It is based on t
 | Area | State |
 |---|---|
 | Boot, display (simplefb), USB gadget, eMMC (ro), Wi-Fi | working in the bring-up images |
-| Audio (HI6402 codec over SLIMbus, TFA9894 amps) | codec + routing work; playback DMA under investigation |
-| Rotation (LIS3DH) | node in place; first bus access pending |
-| Deep sleep | firmware reports PSCI v1.0; survey pending |
+| Touch (Elan ekth5512c, i2c-hid) | working; survives s2idle (touchscreen kept powered as a wakeup source) |
+| Battery / charger (HI6555V100 coulomb counter, Hi6523) | battery reporting; managed charging (CV 4100 mV, 700 mA) with a hardware watchdog |
+| Audio (HI6402 codec over SLIMbus, TFA9894 amps, out-of-tree in `bach2/`) | playback audible on two of four speakers (codec S4 word length fix); the other two and the mic ADC are open |
+| Deep sleep | s2idle works (PL031 alarm wake) without the Hi1102 Wi-Fi driver loaded; with it, the SDIO function blocks suspend |
+| Rotation (LIS3DH) | blocked: the sensor bus belongs to the IOMCU (sensorhub firmware needed) |
 
 ## Build
 CI builds every push (`.github/workflows/build.yml`) in an `alpine:3.21` container, with cached
