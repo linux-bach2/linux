@@ -4,6 +4,7 @@
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/clock/hi6250-clock.h>
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/power/hisilicon,hi6250-lpm3-pd.h>
 
 / {
 	compatible = "hisilicon,hi6250";
@@ -510,6 +511,36 @@
 			hisilicon,hi6250-sys-ctrl = <&sys_ctrl>;
 			#clock-cells = <1>;
 			mboxes = <&mailbox 13 3 0>;
+		};
+
+		/*
+		 * Power domains that only the LPM3 firmware switches (stock hi3xxx-regulator-type2,
+		 * LPM3 words on IPC mailbox 14). Mailbox 14 has one client: not together with
+		 * bach2,asp or bach2,audio-e2.
+		 */
+		lpm3_pd: power-controller {
+			compatible = "hisilicon,hi6250-lpm3-pd";
+			hisilicon,crg-syscon = <&crg_ctrl>;
+			mboxes = <&mailbox 14 3 1>;
+			#power-domain-cells = <1>;
+			status = "disabled";
+		};
+
+		/*
+		 * Mali-T830 MP2 r1p0 (stock mali@E8970000, vendor kbase "Mali-T83x 2 cores r1p0").
+		 * Power: LPM3 "g3d" domain; clock: LPM3 DVFS through the stub clock (no OPP table
+		 * yet: no frequency request is made).
+		 */
+		gpu: gpu@e8970000 {
+			compatible = "hisilicon,hi6250-mali", "arm,mali-t830";
+			reg = <0x0 0xe8970000 0x0 0x4000>;
+			interrupts = <GIC_SPI 258 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 259 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 260 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "job", "mmu", "gpu";
+			clocks = <&stub_clock HI6250_CLK_STUB_GPU>;
+			power-domains = <&lpm3_pd HI6250_LPM3_PD_G3D>;
+			status = "disabled";
 		};
 
 		mailbox: mailbox@e896b000 { /* not sure */
