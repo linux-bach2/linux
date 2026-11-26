@@ -1215,6 +1215,23 @@ int vxd_pvdec_send_msg(const void *dev,
 	return 0;
 }
 
+/* Read word <word> (0 = header) of the message pending from the MTX, without consuming it */
+int vxd_pvdec_peek_msg_word(const void *dev, void __iomem *reg_base, unsigned int word,
+			    unsigned int *val)
+{
+	int ret, to_host_off;
+	unsigned int wr_idx, rd_idx;
+	unsigned long to_host_size;
+
+	ret = pvdec_get_to_host_cfg(reg_base, &to_host_size, &to_host_off, &wr_idx, &rd_idx);
+	if (ret)
+		return ret;
+	if (wr_idx == rd_idx)
+		return -ENODATA;
+
+	return pvdec_read_vlr(reg_base, val, 1, to_host_off + (rd_idx + word) % to_host_size);
+}
+
 /* Fetch size (in dwords) of message pending from MTX */
 int vxd_pvdec_pend_msg_info(const void *dev, void __iomem *reg_base,
 			    unsigned long *size,

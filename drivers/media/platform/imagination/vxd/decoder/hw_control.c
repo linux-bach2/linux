@@ -609,20 +609,11 @@ static int vdeckm_get_core_state(const void *hndl_vxd, struct vxd_states *state)
 				firmware_state.pipestate[pipe].be_mbs_dropped;
 			state->fw_state.pipe_state[pipe].be_mbs_recovered =
 				firmware_state.pipestate[pipe].be_mbs_recovered;
-			state->fw_state.pipe_state[pipe].fe_mb.x =
-				firmware_state.pipestate[pipe].last_fe_mb_xy & 0xFF;
-			state->fw_state.pipe_state[pipe].fe_mb.y =
-				(firmware_state.pipestate[pipe].last_fe_mb_xy >> 16) & 0xFF;
-			state->fw_state.pipe_state[pipe].be_mb.x =
-				REGIO_READ_FIELD(firmware_state.pipestate[pipe].last_be_mb_xy,
-						 MSVDX_VDMC,
-						 CR_VDMC_MACROBLOCK_NUMBER,
-						 CR_VDMC_MACROBLOCK_X_OFFSET);
-			state->fw_state.pipe_state[pipe].be_mb.y =
-				REGIO_READ_FIELD(firmware_state.pipestate[pipe].last_be_mb_xy,
-						 MSVDX_VDMC,
-						 CR_VDMC_MACROBLOCK_NUMBER,
-						 CR_VDMC_MACROBLOCK_Y_OFFSET);
+			/* the 2016 DDK firmware does not report the last FE/BE macroblock */
+			state->fw_state.pipe_state[pipe].fe_mb.x = 0;
+			state->fw_state.pipe_state[pipe].fe_mb.y = 0;
+			state->fw_state.pipe_state[pipe].be_mb.x = 0;
+			state->fw_state.pipe_state[pipe].be_mb.y = 0;
 		}
 	}
 
@@ -669,7 +660,8 @@ static int vdeckm_prepare_batch(struct vdeckm_context *core_ctx,
 
 	MEMIO_WRITE_FIELD(pmsg, FW_DEVA_DECODE_GENC_ID, batch_msgdata->genc_id, unsigned char*);
 
-	MEMIO_WRITE_FIELD(pmsg, FW_DEVA_DECODE_MB_LOAD, batch_msgdata->mb_load, unsigned char*);
+	/* 2016 firmware: no MB_LOAD field; the pixel pipe (1-based, the only one on Hi6250) */
+	MEMIO_WRITE_FIELD(pmsg, FW_DEVA_DECODE_PIPE, 1, unsigned char*);
 
 	MEMIO_WRITE_FIELD(pmsg, FW_DEVA_DECODE_STREAMID,
 			  GET_STREAM_ID(batch_msgdata->transaction_id), unsigned char*);
@@ -705,6 +697,10 @@ static int vdeckm_prepare_fragment(struct vdeckm_context *core_ctx,
 	unsigned char *pmsg = NULL;
 
 	pbatch_msg_bufinfo = fragment_msgdata->batchmsg_bufinfo;
+
+	/* The 2016 DDK firmware (Hi6250) has no fragment message: a picture must be complete */
+	pr_err("vxd-dec: picture fragments are not supported by this firmware\n");
+	return IMG_ERROR_NOT_SUPPORTED;
 
 	if (!(fragment_msgdata->batchmsg_bufinfo)) {
 		pr_err("Batch message info missing!\n");

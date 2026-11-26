@@ -697,12 +697,7 @@ struct h264fw_last_pic_data {
 
 	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
 			unsigned int, mbparams_base_address);
-	/* Top field order count for this picture */
-	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
-			int, top_field_order_count);
-	/* Bottom field order count for this picture */
-	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
-			int, bottom_field_order_count);
+	/* (no field order counts here in the 2016 DDK firmware) */
 };
 
 /*

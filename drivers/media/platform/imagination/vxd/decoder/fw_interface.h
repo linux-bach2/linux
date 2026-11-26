@@ -25,6 +25,12 @@
 /* Start of parser specific MTX->Host message */
 #define MSG_TYPE_START_PSR_MTXHOST_MSG  (0xC0)
 
+/*
+ * Message types of the 2016 IMG DDK firmware (stock Hi6250 pvdec_full_bin.fw; Huawei
+ * D5500_DRM firmware_pvdec/source/core/fw_interface.h, built with VDEC_USE_PVDEC_COMPATIBILITY
+ * and VDEC_USE_PVDEC_SEC). TI's later firmware inserts PARSE_FRAGMENT after PARSE and packs
+ * the MTX->host types differently (PANIC 0xc1 there, 0xc7 here).
+ */
 enum {
 	FW_DEVA_INIT = MSG_TYPE_START_PSR_HOSTMTX_MSG,
 	FW_DEVA_DECODE_FE,
@@ -35,51 +41,38 @@ enum {
 	FW_DEVA_DEBLOCK,
 	FW_DEVA_INTRA_OOLD,
 	FW_DEVA_ENDFRAME,
-
-	FW_DEVA_PARSE,
-	FW_DEVA_PARSE_FRAGMENT,
+	FW_DEVA_PARSE,			/* 0x89 */
 	FW_DEVA_BEGINFRAME,
-
-#ifdef VDEC_USE_PVDEC_COMPATIBILITY
-#ifdef VDEC_USE_PVDEC_SEC
 	FWBSP_INIT,
 	FWBSP_PARSE_BITSTREAM,
+	FWDEC_INIT,
+	FWDEC_CONFIGURE,
 	FWDEC_DECODE,
-#endif /* VDEC_USE_PVDEC_SEC */
-#endif /* VDEC_USE_PVDEC_COMPATIBILITY */
 
-	/* Sent by the firmware on the MTX to the host. */
 	FW_DEVA_COMPLETED = MSG_TYPE_START_PSR_MTXHOST_MSG,
-#ifndef VDEC_USE_PVDEC_COMPATIBILITY
 	FW_DEVA_RES_2,
 	FW_DEVA_RES_3,
 	FW_DEVA_RES_4,
 	FW_DEVA_RES_5,
-
 	FW_DEVA_RES_6,
-	FW_DEVA_CONTIGUITY_WARNING,
-	FW_DEVA_PANIC,
-	FW_DEVA_RES_7,
-	FW_DEVA_RES_8,
-#else   /* ndef VDEC_USE_PVDEC_COMPATIBILITY */
-	FW_DEVA_PANIC,
-	FW_ASSERT,
+	FW_DEVA_CONTIGUITY_WARNING,	/* 0xc6 */
+	FW_DEVA_PANIC,			/* 0xc7 */
+	FW_ASSERT,			/* 0xc8 */
 	FW_PERF,
-	/* An empty completion message sent by new vxd driver */
-	FW_VXD_EMPTY_COMPL,
-	FW_DEC_REQ_RECEIVED,
-	FW_SO,
-#ifdef VDEC_USE_PVDEC_SEC
 	FWBSP_NEW_SEQ,
 	FWBSP_NEW_PIC,
 	FWBSP_BUF_EMPTY,
 	FWBSP_ERROR,
 	FWDEC_COMPLETED,
-#endif /* VDEC_USE_PVDEC_SEC */
-#endif /* VDEC_USE_PVDEC_COMPATIBILITY */
+
 	FW_DEVA_SIGNATURES_LEGACY      = 0xD0,
 	FW_DEVA_SIGNATURES_HEVC        = 0xE0,
-	FW_DEVA_SIGNATURES_FORCE32BITS = 0x7FFFFFFFU
+
+	/* not in the 2016 firmware: values it never sends or accepts */
+	FW_DEVA_PARSE_FRAGMENT         = 0xF1,
+	FW_VXD_EMPTY_COMPL             = 0xF2,
+	FW_DEC_REQ_RECEIVED            = 0xF3,
+	FW_SO                          = 0xF4,
 };
 
 /* Defines the Host/Firmware communication area */
@@ -525,12 +518,10 @@ struct vdec_ext_cmd {
 	/* needed for separate colour planes */
 	unsigned int intra_buf_base_addr;
 	unsigned int intra_buf_size_per_plane;
-	unsigned int intra_buf_size_per_pipe;
 	unsigned int chroma2reconstructed_addr;
 	unsigned int luma_alt_addr;
 	unsigned int chroma_alt_addr;
 	unsigned int chroma2alt_addr;
-	unsigned int aux_line_buf_size_per_pipe;
 	unsigned int aux_line_buffer_base_addr;
 	unsigned int alt_output_pict_rotation;
 	/* miscellaneous flags */

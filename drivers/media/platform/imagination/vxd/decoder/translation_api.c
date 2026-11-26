@@ -573,8 +573,9 @@ static int translation_pvdec_adddma_transfers
 		dma_hdr += (2 * (CMD_BITSTREAM_SEGMENTS_MINUS1_MASK + 1));
 		segcount -= (CMD_BITSTREAM_SEGMENTS_MINUS1_MASK + 1);
 	}
-	*dma_hdr = eop ? CMD_BITSTREAM_EOP_MASK : 0;
-	*dma_hdr++ |= CMD_BITSTREAM_SEGMENTS | (segcount - 1);
+	/* the 2016 DDK firmware has no end-of-picture flag (CMD_BITSTREAM_EOP_MASK) */
+	(void)eop;
+	*dma_hdr++ = CMD_BITSTREAM_SEGMENTS | (segcount - 1);
 	*dma_hdr = bitstream_size;
 
 	/*
@@ -1362,14 +1363,10 @@ static int translation_pvdecsetup_vdecext
 
 	vdec_ext->intra_buf_base_addr =
 		pic_cmds[VDECFW_CMD_INTRA_BUFFER_BASE_ADDRESS];
-	vdec_ext->intra_buf_size_per_pipe =
-		pic_cmds[VDECFW_CMD_INTRA_BUFFER_SIZE_PER_PIPE];
 	vdec_ext->intra_buf_size_per_plane =
 		pic_cmds[VDECFW_CMD_INTRA_BUFFER_PLANE_SIZE];
 	vdec_ext->aux_line_buffer_base_addr =
 		pic_cmds[VDECFW_CMD_AUX_LINE_BUFFER_BASE_ADDRESS];
-	vdec_ext->aux_line_buf_size_per_pipe =
-		pic_cmds[VDECFW_CMD_AUX_LINE_BUFFER_SIZE_PER_PIPE];
 	vdec_ext->alt_output_pict_rotation =
 		pic_cmds[VDECFW_CMD_ALTERNATIVE_OUTPUT_PICTURE_ROTATION];
 	vdec_ext->chroma2reconstructed_addr =

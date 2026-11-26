@@ -755,12 +755,8 @@ void vxd_set_reconpictcmds(const struct vdecdd_str_unit *str_unit,
 		(unsigned int)GET_HOST_ADDR(buffers->intra_bufinfo);
 	pict_cmds[VDECFW_CMD_INTRA_BUFFER_PLANE_SIZE] =
 		buffers->intra_bufsize_per_pipe / 3;
-	pict_cmds[VDECFW_CMD_INTRA_BUFFER_SIZE_PER_PIPE] =
-		buffers->intra_bufsize_per_pipe;
 	pict_cmds[VDECFW_CMD_AUX_LINE_BUFFER_BASE_ADDRESS] =
 		(unsigned int)GET_HOST_ADDR(buffers->auxline_bufinfo);
-	pict_cmds[VDECFW_CMD_AUX_LINE_BUFFER_SIZE_PER_PIPE] =
-		buffers->auxline_bufsize_per_pipe;
 
 	/*
 	 * for pvdec we need to set this registers even if we don't

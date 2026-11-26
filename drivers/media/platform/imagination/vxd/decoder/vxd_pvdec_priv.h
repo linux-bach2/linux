@@ -82,6 +82,9 @@ int vxd_pvdec_dis(const void *dev, void __iomem *reg_base);
 
 int vxd_pvdec_mmu_flush(const void *dev, void __iomem *reg_base);
 
+int vxd_pvdec_peek_msg_word(const void *dev, void __iomem *reg_base, unsigned int word,
+			    unsigned int *val);
+
 int vxd_pvdec_send_msg(const void *dev, void __iomem *reg_base,
 		       unsigned int *msg, unsigned long msg_size, unsigned short msg_id,
 		       struct vxd_dev *ctx);

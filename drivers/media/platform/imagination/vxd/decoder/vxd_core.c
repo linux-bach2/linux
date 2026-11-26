@@ -31,10 +31,14 @@
 #include <media/v4l2-mem2mem.h>
 
 #include "img_dec_common.h"
+#include "fw_interface.h"
+#include "img_vdec_fw_msg.h"
+#include "mem_io.h"
 #include "vxd_pvdec_priv.h"
 #include "img_errors.h"
 
 #define VXD_RENDEC_SIZE (5 * 1024 * 1024)
+#define VXD_PTD_TABLE_SIZE 4096
 
 #define VXD_MSG_CNT_SHIFT 8
 #define VXD_MSG_CNT_MASK 0xff00
@@ -81,6 +85,7 @@ static struct {
 	struct {
 		unsigned int fw_addr; /* Firmware blob */
 		unsigned int rendec_addr; /* Rendec buffer */
+		unsigned int ptd_addr; /* Stream PTD table (2016 firmware) */
 	} virt_space;
 
 	int initialised;
@@ -158,6 +163,9 @@ static int vxd_make_hw_on_locked(struct vxd_dev *vxd, unsigned int fw_ptd)
 	ena_params.fw_buf_virt_addr = vxd_drv.virt_space.fw_addr;
 	ena_params.ptd = fw_ptd;
 	vxd->boot_ptd = fw_ptd;
+	/* index 0 of the PTD table: the context the firmware boots in */
+	vxd->ptd_table[0] = fw_ptd;
+	img_mem_sync_cpu_to_device(vxd_drv.mem_ctx, vxd->ptd_buf_id);
 	ena_params.boot_poll.msleep_cycles = 50;
 	ena_params.crc = 0;
 	ena_params.rendec_addr = vxd_drv.virt_space.rendec_addr;
@@ -643,11 +651,20 @@ int vxd_create_ctx(struct vxd_dev *vxd, struct vxd_dec_ctx *ctx)
 		goto out_unmap_fw;
 	}
 
+	ret = img_mmu_map(ctx->mmu_ctx, vxd->mem_ctx, vxd->ptd_buf_id,
+			  vxd_drv.virt_space.ptd_addr,
+			  VXD_MMU_PTD_FLAG_READ_ONLY);
+	if (ret) {
+		dev_err(vxd->dev, "%s:%d: failed to map PTD table\n", __func__, __LINE__);
+		ret = -EPERM;
+		goto out_unmap_rendec;
+	}
+
 	ret = img_mmu_get_ptd(ctx->mmu_ctx, &ctx->ptd);
 	if (ret) {
 		dev_err(vxd->dev, "%s:%d: failed to get PTD\n", __func__, __LINE__);
 		ret = -EPERM;
-		goto out_unmap_rendec;
+		goto out_unmap_ptd;
 	}
 
 	/* load fw - turned Hw on */
@@ -657,19 +674,21 @@ int vxd_create_ctx(struct vxd_dev *vxd, struct vxd_dec_ctx *ctx)
 		ret = -EIO;
 		/* reset the core and drop the power reference taken by the failed boot */
 		vxd_make_hw_off_locked(vxd, FALSE);
-		goto out_unmap_rendec;
+		goto out_unmap_ptd;
 	}
 
 	init_work(&ctx->work, stream_worker, HWA_DECODER);
 	if (!ctx->work) {
 		ret = ENOMEM;
-		goto out_unmap_rendec;
+		goto out_unmap_ptd;
 	}
 
 	vxd->fw_refcnt++;
 
 	return ret;
 
+out_unmap_ptd:
+	img_mmu_unmap(ctx->mmu_ctx, vxd->mem_ctx, vxd->ptd_buf_id);
 out_unmap_rendec:
 	img_mmu_unmap(ctx->mmu_ctx, vxd->mem_ctx, vxd->rendec_buf_id);
 out_unmap_fw:
@@ -698,6 +717,7 @@ void vxd_destroy_ctx(struct vxd_dev *vxd, struct vxd_dec_ctx *ctx)
 			   (ctx->ptd == vxd->boot_ptd && list_empty(&vxd->msgs))))
 		vxd_make_hw_off_locked(vxd, FALSE);
 
+	img_mmu_unmap(ctx->mmu_ctx, vxd->mem_ctx, vxd->ptd_buf_id);
 	img_mmu_unmap(ctx->mmu_ctx, vxd->mem_ctx, vxd->rendec_buf_id);
 
 	img_mmu_unmap(ctx->mmu_ctx, vxd->mem_ctx, vxd->firmware.buf_id);
@@ -832,6 +852,22 @@ static void vxd_handle_single_msg_locked(struct vxd_dev *vxd,
 	}
 	*no_more = FALSE;
 
+	/*
+	 * 2016 DDK firmware: bit 7 of the header is not a "more messages follow" flag, and the
+	 * replies are matched by transaction id in the stock driver. Keep TI's msg-id match, and
+	 * fall back to the transaction id (header word 1) when no item carries this msg id.
+	 */
+	{
+		unsigned int hdr = 0;
+		unsigned int type;
+
+		vxd_pvdec_peek_msg_word(dev, vxd->reg_base, 0, &hdr);
+		type = (hdr >> 8) & 0xff;
+		/* only these end a decode request; warnings/signatures come before the completion */
+		not_last_msg = !(type == FW_DEVA_COMPLETED || type == FW_DEVA_PANIC ||
+				 type == FW_ASSERT);
+	}
+
 	str_id = VXD_MSG_ID_GET_STR_ID(msg_id);
 #ifdef DEBUG_DECODER_DRIVER
 	dev_dbg(dev, "%s: [msg] size: %zu, cnt: %u, str_id: %u, id: 0x%x\n",
@@ -851,6 +887,26 @@ static void vxd_handle_single_msg_locked(struct vxd_dev *vxd,
 		if (it->msg_id == msg_id) {
 			item = it;
 			break;
+		}
+	}
+
+	if (!item) {
+		unsigned int trans_id = 0;
+
+		if (!vxd_pvdec_peek_msg_word(dev, vxd->reg_base, 1, &trans_id) && trans_id) {
+			list_for_each_entry_safe_reverse(it, tmp, &vxd->msgs, list) {
+				if (MEMIO_READ_FIELD(it->msg.payload, FW_DEVA_GENMSG_TRANS_ID) ==
+				    trans_id) {
+					item = it;
+					break;
+				}
+			}
+			if (item) {
+				dev_dbg(dev, "%s: msg id 0x%x matched by trans id 0x%x (item msg id 0x%x)\n",
+					__func__, msg_id, trans_id, item->msg_id);
+				msg_id = item->msg_id;
+				str_id = VXD_MSG_ID_GET_STR_ID(msg_id);
+			}
 		}
 	}
 
@@ -1161,6 +1217,8 @@ int vxd_init(void *dev, struct vxd_dev *vxd,
 
 	vxd_drv.virt_space.fw_addr = 0x42000;
 	vxd_drv.virt_space.rendec_addr = 0xe0000000;
+	/* below the firmware blob, outside the MMU heaps (untiled heap starts at 0x400000) */
+	vxd_drv.virt_space.ptd_addr = 0x40000;
 
 	vxd_drv.initialised = 0;
 
@@ -1228,6 +1286,24 @@ int vxd_init(void *dev, struct vxd_dev *vxd,
 		goto create_mem_context_failed;
 	}
 
+	/*
+	 * Stream PTD table: the 2016 DDK firmware takes the stream's page table directory by
+	 * reference (decode message MMU_STRPTD_BUF_ADDR = table + 4 * stream id; index 0 is the
+	 * PTD the firmware was booted with), like the stock driver's sPtdBufInfo. Mapped at the
+	 * same device address in every stream's MMU context.
+	 */
+	ret = img_mem_alloc(dev, vxd_drv.mem_ctx, vxd_drv.internal_heap_id,
+			    VXD_PTD_TABLE_SIZE, (enum mem_attr)0, &vxd->ptd_buf_id);
+	if (!ret)
+		ret = img_mem_map_km(vxd_drv.mem_ctx, vxd->ptd_buf_id);
+	if (ret) {
+		dev_err(dev, "%s: alloc PTD table failed (err:%d)!\n", __func__, ret);
+		goto create_mem_context_failed;
+	}
+	vxd->ptd_table = img_mem_get_kptr(vxd_drv.mem_ctx, vxd->ptd_buf_id);
+	memset(vxd->ptd_table, 0, VXD_PTD_TABLE_SIZE);
+	img_mem_sync_cpu_to_device(vxd_drv.mem_ctx, vxd->ptd_buf_id);
+
 	init_delayed_work(&vxd->dwork, vxd_worker, HWA_DECODER);
 	if (!vxd->dwork) {
 		ret = ENOMEM;
@@ -1272,8 +1348,9 @@ void vxd_deinit(struct vxd_dev *vxd)
 
 	/* Destroy memory management context */
 	if (vxd_drv.mem_ctx) {
-		/* Deallocate rendec buffer */
+		/* Deallocate rendec buffer and PTD table */
 		img_mem_free(vxd_drv.mem_ctx, vxd->rendec_buf_id);
+		img_mem_free(vxd_drv.mem_ctx, vxd->ptd_buf_id);
 
 		img_mem_destroy_ctx(vxd_drv.mem_ctx);
 		vxd_drv.mem_ctx = NULL;
@@ -1428,11 +1505,6 @@ int vxd_send_msg(struct vxd_dec_ctx *ctx, struct vxd_fw_msg *msg)
 	if (msg_size > VXD_MAX_INPUT_SIZE)
 		return -EINVAL;
 
-	/* Verify that the gap was left for stream PTD */
-	if (msg->payload[VXD_PTD_MSG_OFFSET] != 0) {
-		dev_err(vxd->dev, "%s: PTD gap missing!\n", __func__);
-		return -EINVAL;
-	}
 
 	ret = mutex_lock_interruptible_nested(ctx->mutex, SUBCLASS_VXD_CORE);
 	if (ret)
@@ -1462,10 +1534,24 @@ int vxd_send_msg(struct vxd_dec_ctx *ctx, struct vxd_fw_msg *msg)
 	item->destroy = 0;
 
 	/*
-	 * Inject the stream PTD into the message. It was already verified that
-	 * there is enough space.
+	 * 2016 DDK firmware: a decode (PARSE) message names the stream PTD by reference. Put the
+	 * PTD into the table slot of the message's stream id and point the message at it.
 	 */
-	item->msg.payload[VXD_PTD_MSG_OFFSET] = stream->ptd;
+	if (MEMIO_READ_FIELD(item->msg.payload, FW_DEVA_GENMSG_MSG_TYPE) == FW_DEVA_PARSE) {
+		unsigned int slot = MEMIO_READ_FIELD(item->msg.payload, FW_DEVA_DECODE_STREAMID);
+
+		if (!slot || slot >= VXD_PTD_TABLE_SIZE / sizeof(unsigned int)) {
+			dev_err(vxd->dev, "%s: bad stream id %u in decode message\n", __func__, slot);
+			kfree(item);
+			ret = -EINVAL;
+			goto out_unlock;
+		}
+		vxd->ptd_table[slot] = stream->ptd;
+		img_mem_sync_cpu_to_device(vxd_drv.mem_ctx, vxd->ptd_buf_id);
+		MEMIO_WRITE_FIELD(item->msg.payload, FW_DEVA_DECODE_MMU_STRPTD_BUF_ADDR,
+				  vxd_drv.virt_space.ptd_addr + slot * sizeof(unsigned int),
+				  unsigned int *);
+	}
 
 	list_add_tail(&item->list, &vxd->pend);
 #ifdef DEBUG_DECODER_DRIVER

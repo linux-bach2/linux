@@ -219,47 +219,48 @@ enum vdecfw_msvdxentdecmode {
  * Numbers indicate point in the "VDEC Firmware Component Timing" diagram.
  */
 enum vdecfw_progresscheckpoint {
+	/*
+	 * Layout of the 2016 IMG DDK firmware (stock Hi6250; Huawei D5500_DRM
+	 * vdecfw_shared.h): SYNC_COMPLETE at 3 and the FI_* (firmware init)
+	 * checkpoints instead of TI's AUX ones.
+	 */
 	/* Decode message has been read */
 	VDECFW_CHECKPOINT_PICTURE_STARTED     = 1,
 	/* Firmware has been loaded and bitstream DMA started */
 	VDECFW_CHECKPOINT_FIRMWARE_READY      = 2,
+	/* Synchronisation with the other pipes completed */
+	VDECFW_CHECKPOINT_SYNC_COMPLETE       = 3,
 	/* Picture management operations have completed */
-	VDECFW_CHECKPOINT_PICMAN_COMPLETE     = 3,
+	VDECFW_CHECKPOINT_PICMAN_COMPLETE     = 4,
 	/* Firmware context for this picture has been saved */
-	VDECFW_CHECKPOINT_FIRMWARE_SAVED      = 4,
+	VDECFW_CHECKPOINT_FIRMWARE_SAVED      = 5,
 	/*
 	 * 1st Picture/Slice header has been read,
 	 * registers written and Entdec started
 	 */
-	VDECFW_CHECKPOINT_ENTDEC_STARTED      = 5,
+	VDECFW_CHECKPOINT_ENTDEC_STARTED      = 6,
 	/* 1st Slice has been completed by Entdec */
-	VDECFW_CHECKPOINT_FE_1SLICE_DONE      = 6,
+	VDECFW_CHECKPOINT_FE_1SLICE_DONE      = 7,
 	/* Parsing of picture has completed on FE */
-	VDECFW_CHECKPOINT_FE_PARSE_DONE       = 7,
+	VDECFW_CHECKPOINT_FE_PARSE_DONE       = 8,
 	/* Picture end code has been read and picture closed */
-	VDECFW_CHECKPOINT_FE_PICTURE_COMPLETE = 8,
+	VDECFW_CHECKPOINT_FE_PICTURE_COMPLETE = 9,
 	/* Picture has started decoding on VXD Backend */
-	VDECFW_CHECKPOINT_BE_PICTURE_STARTED  = 9,
+	VDECFW_CHECKPOINT_BE_PICTURE_STARTED  = 10,
 	/* 1st Slice has completed on VXD Backend */
-	VDECFW_CHECKPOINT_BE_1SLICE_DONE      = 10,
+	VDECFW_CHECKPOINT_BE_1SLICE_DONE      = 11,
 	/* Picture decode has completed and done message sent to the Host */
-	VDECFW_CHECKPOINT_BE_PICTURE_COMPLETE = 11,
-#ifndef FW_STACK_USAGE_TRACKING
-	/* General purpose check point 1 */
-	VDECFW_CHECKPOINT_AUX1                = 12,
-	/* General purpose check point 2 */
-	VDECFW_CHECKPOINT_AUX2                = 13,
-	/* General purpose check point 3 */
-	VDECFW_CHECKPOINT_AUX3                = 14,
-	/* General purpose check point 4 */
-	VDECFW_CHECKPOINT_AUX4                = 15,
-#endif  /* ndef FW_STACK_USAGE_TRACKING */
+	VDECFW_CHECKPOINT_BE_PICTURE_COMPLETE = 12,
+	/* Firmware is started */
+	VDECFW_CHECKPOINT_FI_INIT_START       = 13,
+	/* Firmware has completed the initialisation successfully */
+	VDECFW_CHECKPOINT_FI_INIT_END         = 14,
+	/* Firmware has received the first POST message */
+	VDECFW_CHECKPOINT_FI_POST_MSG         = 15,
 	VDECFW_CHECKPOINT_MAX,
 	/*
 	 * Indicate which checkpoints mark the start and end of each
 	 * group (FW, FE and BE).
-	 * The start and end values should be updated if new checkpoints are
-	 * added before the current start or after the current end of any group.
 	 */
 	VDECFW_CHECKPOINT_FW_START            = VDECFW_CHECKPOINT_PICTURE_STARTED,
 	VDECFW_CHECKPOINT_FW_END              = VDECFW_CHECKPOINT_FIRMWARE_SAVED,
@@ -410,10 +411,14 @@ enum vdecfw_message_id {
 #define VDECFW_MSGID_COMPLETION_TYPES \
 	(VDECFW_MSGID_COMPLETION_MAX - VDECFW_MSGID_BE_PADDING)
 
-/* This describes the layout of PVDEC Firmware state indicators in Comms RAM. */
+/*
+ * This describes the layout of PVDEC Firmware state indicators in Comms RAM, as the 2016 DDK
+ * firmware writes it (Huawei D5500_DRM, built with VDEC_USE_PVDEC_SEC): fence ids first, four
+ * pipe states, each with the fence value and the secure-parser step.
+ */
 
 /* Maximum number of PVDEC decoding pipes per core supported. */
-#define VDECFW_MAX_DP  3
+#define VDECFW_MAX_DP  4
 
 struct vdecfw_pvdecpipestate {
 	/* TransactionID at each checkpoint */
@@ -422,22 +427,19 @@ struct vdecfw_pvdecpipestate {
 	/* VDECFW_eFirmwareAction (UINT32 used to guarantee size) */
 	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
 			unsigned int, firmware_action);
+	/* Value in the FENCE field of the last message processed */
+	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
+			unsigned int, fence_value);
 	/* Number of FE Slices processed for the last picture in FE */
 	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
 			unsigned int, fe_slices);
 	/* Number of BE Slices processed for the last picture in BE */
 	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
 			unsigned int, be_slices);
-	/*
-	 * Number of FE Slices being detected as erroed for the last picture
-	 * in FE
-	 */
+	/* Number of FE Slices detected as errored for the last picture in FE */
 	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
 			unsigned int, fe_errored_slices);
-	/*
-	 * Number of BE Slices being detected as erroed for the last picture
-	 * in BE
-	 */
+	/* Number of BE Slices detected as errored for the last picture in BE */
 	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
 			unsigned int, be_errored_slices);
 	/* Number of BE macroblocks dropped for the last picture */
@@ -446,12 +448,9 @@ struct vdecfw_pvdecpipestate {
 	/* Number of BE macroblocks recovered for the last picture */
 	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
 			unsigned int, be_mbs_recovered);
-	/* Number of FE macroblocks processed for the last picture in FE */
+	/* Progress of the firmware bitstream parser (secure flow) */
 	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
-			unsigned int, last_fe_mb_xy);
-	/* Number of BE macroblocks processed for the last picture in BE */
-	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
-			unsigned int, last_be_mb_xy);
+			unsigned int, fw_bsp_step);
 	/* VDECFW_eCodecType - Codec currently loaded */
 	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
 			unsigned char, curr_codec);
@@ -460,23 +459,18 @@ struct vdecfw_pvdecpipestate {
 			int, pipe_present);
 };
 
-#ifdef FW_STACK_USAGE_TRACKING
-/* Stack usage info array size. */
-#define VDECFW_STACK_INFO_SIZE (VDECFW_MAX_DP * VDECFW_CHECKPOINT_AUX_COUNT)
-#endif /* FW_STACK_USAGE_TRACKING */
 struct vdecfw_pvdecfirmwarestate {
-	/*
-	 * Indicates generic progress taken by firmware
-	 * (must be the first item)
-	 */
-	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT, unsigned int, fwstep);
+	/* FenceID of the last message processed in the control message buffer */
+	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT, unsigned char,
+			control_fence_id[VDECFW_MSGID_CONTROL_TYPES]);
+	/* FenceID of the last message processed in the decode message buffer */
+	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT, unsigned char,
+			decode_fence_id[VDECFW_MSGID_DECODE_TYPES]);
+	/* FenceID of the last message processed in the completion message buffer */
+	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT, unsigned char,
+			completion_fence_id[VDECFW_MSGID_COMPLETION_TYPES]);
 	/* Pipe state array. */
 	struct vdecfw_pvdecpipestate pipestate[VDECFW_MAX_DP];
-#ifdef FW_STACK_USAGE_TRACKING
-	/* Stack usage info array. */
-	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT, unsigned int,
-			stackinfo[VDECFW_STACK_INFO_SIZE]);
-#endif  /* FW_STACK_USAGE_TRACKING */
 };
 
 /*
@@ -557,6 +551,9 @@ struct vdecfw_hevcdata {
 /*
  * This describes the buffer control structure that is used by the firmware to
  * signal to the Host to control the display and release of buffers.
+ * Layout of the 2016 DDK firmware (Huawei D5500_DRM VDECFW_sBufferControl with
+ * VDEC_USE_PVDEC_SEC): sizes, then picture type/flags, then the timestamp; no
+ * reference list (TI's later firmware reports one).
  */
 struct vdecfw_buffer_control {
 	/*
@@ -585,10 +582,17 @@ struct vdecfw_buffer_control {
 	/* Number of TransactionIDs in aui32ReleaseList */
 	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
 			unsigned int, release_list_length);
-	union {
-		struct vdecfw_real_data real_data;
-		struct vdecfw_hevcdata hevc_data;
-	};
+	/* Picture and scaled picture sizes (used by RealVideo only) */
+	struct {
+		IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
+				unsigned int, width);
+		IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
+				unsigned int, height);
+		IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
+				unsigned int, scaled_width);
+		IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
+				unsigned int, scaled_height);
+	} real_data;
 	/*
 	 * Refers to the picture decoded with the current transaction ID
 	 * (not affected by merge with field of previous transaction ID)
@@ -604,18 +608,16 @@ struct vdecfw_buffer_control {
 	 */
 	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
 			unsigned char, top_field_first);
-	/* Top field is first to be displayed */
-	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
-			unsigned char, out_top_field_first);
 	/* Picture management flags for this picture */
 	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
 			unsigned char, picmgmt_flags);
-	/*
-	 * List of TransactionIDs indicating buffers used as references
-	 * when decoding current picture
-	 */
+	/* Timestamp parsed in firmware (RealVideo) */
 	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
-			unsigned int, ref_list[VDECFW_MAX_NUM_PICTURES]);
+			unsigned int, timestamp);
+	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
+			unsigned char, repeat_first_field);
+	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
+			unsigned char, max_frm_repeat);
 };
 
 /*
@@ -738,10 +740,7 @@ enum vdecfw_picture_cmds {
 	VDECFW_CMD_SCALE_OUTPUT_SIZE,
 	/* VDECFW_CMD_INTRA_BUFFER_PLANE_SIZE */
 	VDECFW_CMD_INTRA_BUFFER_PLANE_SIZE,
-	/* VDECFW_CMD_INTRA_BUFFER_SIZE_PER_PIPE */
-	VDECFW_CMD_INTRA_BUFFER_SIZE_PER_PIPE,
-	/* VDECFW_CMD_AUX_LINE_BUFFER_SIZE_PER_PIPE */
-	VDECFW_CMD_AUX_LINE_BUFFER_SIZE_PER_PIPE,
+	/* (TI's later firmware has INTRA_BUFFER_/AUX_LINE_BUFFER_SIZE_PER_PIPE here) */
 	VDECFW_SLICE_X_MB_OFFSET,
 	VDECFW_SLICE_Y_MB_OFFSET,
 	VDECFW_SLICE_TYPE,
@@ -791,6 +790,13 @@ struct vdecfw_transaction {
 	/* Dictates to the FW parser how the NALs are delimited */
 	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
 			enum vdecfw_parsermode, parser_mode);
+	/* Front-end, back-end and parser watchdog timeouts (2016 DDK firmware; 0 = default) */
+	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
+			unsigned int, fe_wdt);
+	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
+			unsigned int, be_wdt);
+	IMG_ALIGN_FIELD(VDECFW_SHARE_DEFAULT_ALIGNMENT,
+			unsigned int, psr_wdt);
 	/* Address from which to load the parser context data. */
 	IMG_ALIGN_FIELD(VDECFW_SHARE_PTR_ALIGNMENT,
 			unsigned int, ctx_load_addr);

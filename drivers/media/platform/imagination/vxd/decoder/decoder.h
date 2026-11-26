@@ -195,6 +195,12 @@ struct dec_pict_attrs {
  */
 union dec_fw_contexts {
 	struct h264fw_context_data h264_context;
+	/*
+	 * The 2016 DDK firmware's H.264 context is 8296 bytes (it embeds the SPS/PPS with the
+	 * secure-parser fields, Huawei D5500_DRM H264FW_sContextData), larger than the struct
+	 * above, whose fields up to the DPB/display data the host reads are laid out alike.
+	 */
+	unsigned char hi6250_fw_ctx[12288];
 #ifdef HAS_JPEG
 	struct jpegfw_context_data jpeg_context;
 #endif

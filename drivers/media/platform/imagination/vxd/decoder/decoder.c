@@ -2192,20 +2192,12 @@ static int decoder_check_ref_errors(struct dec_str_ctx *dec_str_ctx,
 		return IMG_ERROR_INVALID_PARAMETERS;
 	}
 
-	for (i = 0; i < VDECFW_MAX_NUM_PICTURES && buf_ctrl->ref_list[i];
-		i++) {
-		ref_pict = decoder_get_decoded_pict_of_stream
-			(GET_STREAM_PICTURE_ID(buf_ctrl->ref_list[i]),
-				&dec_str_ctx->str_decd_pict_list);
-		if (ref_pict && ref_pict->pict && ref_pict->pict->dec_pict_info &&
-		    ref_pict->pict->dec_pict_info->err_flags) {
-			picture->dec_pict_info->err_flags |=
-				VDEC_ERROR_CORRUPTED_REFERENCE;
-			pr_warn("Picture decoded using corrupted reference: 0x%08X 0x%08X",
-				ref_pict->transaction_id,
-				ref_pict->pict->dec_pict_info->err_flags);
-		}
-	}
+	/*
+	 * The 2016 DDK firmware (Hi6250) does not report the reference list in the buffer
+	 * control structure, so corrupted references cannot be propagated here.
+	 */
+	(void)ref_pict;
+	(void)i;
 
 	return IMG_SUCCESS;
 }
@@ -3883,7 +3875,7 @@ static int decoder_picture_decoded(struct dec_str_ctx *dec_str_ctx,
 			}
 
 			decoded_pict->pict->dec_pict_info->timestamp =
-				buf_ctrl->real_data.timestamp;
+				buf_ctrl->timestamp;
 			decoded_pict->pict->dec_pict_info->disp_info.top_fld_first =
 				buf_ctrl->top_field_first;
 			decoded_pict->pict->dec_pict_info->disp_info.top_fld_first =

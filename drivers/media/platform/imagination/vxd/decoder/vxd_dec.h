@@ -277,6 +277,8 @@ struct vxd_dev {
 	const char *fw_name;
 	unsigned int mmu_config_addr_width;
 	int rendec_buf_id;
+	int ptd_buf_id; /* stream PTD table (2016 firmware) */
+	unsigned int *ptd_table;
 	struct vxd_dev_fw firmware;
 	void *firmware_loading_complete;
 	unsigned char no_fw;
