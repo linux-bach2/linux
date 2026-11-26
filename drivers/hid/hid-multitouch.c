@@ -1571,10 +1571,12 @@ static int mt_event(struct hid_device *hid, struct hid_field *field,
  * Elan eKTH5512C (04F3:2761) in the Huawei MediaPad M5 lite 10 ("bach2"). Its firmware declares a
  * 27-byte touch report (ID 1), but sends the 15-byte one the vendor driver (elan_ts) parses:
  * two contacts of {status: bit 0 tip, bit 1 in range, bits 2-7 contact id; 2 unknown bytes;
- * X, Y little-endian 16 bit} and the contact count (hybrid mode: up to five reports per frame).
- * The pen report (ID 7) is {bit 0 in range, bit 1 tip; X, Y, pressure 16 bit}. hid-core drops
- * every report shorter than its declaration, so nothing reached userspace. The ranges are the
- * firmware's own (sensor (Tx - 1, Rx - 1) x 64 for fingers, x 260 for the pen), as elan_ts computes.
+ * two little-endian 16-bit coordinates} and the contact count (hybrid mode: up to five reports
+ * per frame). The pen report (ID 7) is {bit 0 in range, bit 1 tip; two coordinates, pressure}.
+ * hid-core drops every report shorter than its declaration, so nothing reached userspace.
+ * elan_ts reads the first coordinate as the panel's Y (long axis, 0..(Rx - 1) x 64 = 3328; pen
+ * x 260 = 13520) and the second as X (0..(Tx - 1) x 64 = 2048; pen 8320), and mirrors X
+ * (lcd_max_x - x), so the descriptor declares Y before X and the device gets HID_QUIRK_X_INVERT.
  */
 #define MT_ELAN_BACH2_PRODUCT	0x2761
 
@@ -1601,11 +1603,11 @@ static const __u8 mt_elan_bach2_rdesc[] = {
 	0x75, 0x10,		/*   Report Size (16) */		\
 	0x81, 0x03,		/*   Input (Cnst): 2 unknown bytes */	\
 	0x05, 0x01,		/*   Usage Page (Generic Desktop) */	\
-	0x09, 0x30,		/*   Usage (X) */			\
-	0x26, 0x00, 0x08,	/*   Logical Maximum (2048) */		\
-	0x81, 0x02,		/*   Input (Data,Var,Abs) */		\
 	0x09, 0x31,		/*   Usage (Y) */			\
 	0x26, 0x00, 0x0d,	/*   Logical Maximum (3328) */		\
+	0x81, 0x02,		/*   Input (Data,Var,Abs) */		\
+	0x09, 0x30,		/*   Usage (X) */			\
+	0x26, 0x00, 0x08,	/*   Logical Maximum (2048) */		\
 	0x81, 0x02,		/*   Input (Data,Var,Abs) */		\
 	0xc0			/*  End Collection */
 	MT_ELAN_BACH2_FINGER,
@@ -1633,13 +1635,13 @@ static const __u8 mt_elan_bach2_rdesc[] = {
 	0x95, 0x06,		/*   Report Count (6) */
 	0x81, 0x03,		/*   Input (Cnst) */
 	0x05, 0x01,		/*   Usage Page (Generic Desktop) */
-	0x09, 0x30,		/*   Usage (X) */
-	0x26, 0x80, 0x20,	/*   Logical Maximum (8320) */
+	0x09, 0x31,		/*   Usage (Y) */
+	0x26, 0xd0, 0x34,	/*   Logical Maximum (13520) */
 	0x75, 0x10,		/*   Report Size (16) */
 	0x95, 0x01,		/*   Report Count (1) */
 	0x81, 0x02,		/*   Input (Data,Var,Abs) */
-	0x09, 0x31,		/*   Usage (Y) */
-	0x26, 0xd0, 0x34,	/*   Logical Maximum (13520) */
+	0x09, 0x30,		/*   Usage (X) */
+	0x26, 0x80, 0x20,	/*   Logical Maximum (8320) */
 	0x81, 0x02,		/*   Input (Data,Var,Abs) */
 	0x05, 0x0d,		/*   Usage Page (Digitizers) */
 	0x09, 0x30,		/*   Usage (Tip Pressure) */
@@ -1659,6 +1661,8 @@ static const __u8 *mt_report_fixup(struct hid_device *hdev, __u8 *rdesc,
 			 *size);
 		print_hex_dump(KERN_DEBUG, "bach2-elan rdesc: ", DUMP_PREFIX_OFFSET, 32, 1,
 			       rdesc, *size, false);
+		/* read at event time by mt_process_slot() and hidinput_hid_event() */
+		hdev->quirks |= HID_QUIRK_X_INVERT;
 		*size = sizeof(mt_elan_bach2_rdesc);
 		return mt_elan_bach2_rdesc;
 	}
