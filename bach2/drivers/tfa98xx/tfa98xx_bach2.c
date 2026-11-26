@@ -467,7 +467,7 @@ static DEVICE_ATTR_RW(rpc);
 static ssize_t status_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct tfa98xx_bach2 *t = dev_get_drvdata(dev);
-	unsigned int v[4] = { 0 }, r;
+	unsigned int v[4] = { 0 }, d[7] = { 0 }, r;
 	int e = 0;
 
 	if (!t)
@@ -475,9 +475,12 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 	mutex_lock(&live_lock);
 	for (r = 0; r < 4; r++)
 		e |= regmap_read(t->regmap, 0x10 + r, &v[r]);
+	for (r = 0; r < 7; r++)	/* TDM config 0x20-0x26 (A11: why 0x35/0x36 see audio and 0x34/0x37 not) */
+		e |= regmap_read(t->regmap, 0x20 + r, &d[r]);
 	mutex_unlock(&live_lock);
-	return sysfs_emit(buf, "e=%d s0=%04x s1=%04x s2=%04x s3=%04x CLIPS=%u LP1=%u LA=%u TDMSTAT=%u\n", e, v[0], v[1],
-			  v[2], v[3], (v[2] >> 4) & 1, (v[2] >> 7) & 1, (v[2] >> 8) & 1, v[3] & 7);
+	return sysfs_emit(buf, "e=%d s0=%04x s1=%04x s2=%04x s3=%04x CLIPS=%u LP1=%u LA=%u TDMSTAT=%u tdm=%04x,%04x,%04x,%04x,%04x,%04x,%04x\n",
+			  e, v[0], v[1], v[2], v[3], (v[2] >> 4) & 1, (v[2] >> 7) & 1, (v[2] >> 8) & 1, v[3] & 7,
+			  d[0], d[1], d[2], d[3], d[4], d[5], d[6]);
 }
 static DEVICE_ATTR_RO(status);
 static struct attribute *tfa98xx_bach2_attrs[] = { &dev_attr_live.attr, &dev_attr_rpc.attr, &dev_attr_status.attr, NULL };
