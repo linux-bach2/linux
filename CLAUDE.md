@@ -73,7 +73,8 @@ pmsg copy (`pstore/pmsg-ramoops-0`); the console copy gets bit flips on the rest
 
 ## Known hardware behaviour that shaped the code
 - The bootloader passes its own DTB; a shim in the boot image replaces it (`/root/pmos-tablet/shim/`).
-- Audio: the SLIMbus play track is 24-bit, so the PCM offers only `S24_LE` (S16 played at 2x). The ASP DMA can't
+- Audio: the SLIMbus FIFOs carry 24-bit samples left-justified in bits 31..8, so the PCM offers `S32_LE`
+  (`S24_LE` lost 48 dB); HI6402 S4 `PORT_CFG_H` stays at stock `0x70` (951d1d724, A19 PASS). The ASP DMA can't
   read the `hifi_data` reserved window, so it uses coherent buffers.
 - SP805 watchdog counts `clkin_ref` (32764 Hz, CRG 0x140 bit 17 = 0); it fires at ~T/2, and SIGTERM to busybox
   `watchdog` doesn't stop it.
