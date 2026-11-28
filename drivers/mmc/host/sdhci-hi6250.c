@@ -206,11 +206,13 @@ static bool hi6250_write_ok(struct mmc_host *mmc, struct mmc_request *mrq)
 }
 
 /* DEBUG (prod-ml-dbg): log how each admitted write completes: command, R1, data and stop results. */
+static struct mmc_host *hi6250_dbg_mmc;		/* DEBUG: the one eMMC host (mrq->host is NULL here) */
+static struct hi6250_sdhci *hi6250_dbg_priv;
+
 static void hi6250_dbg_write_done(struct mmc_request *mrq)
 {
-	struct mmc_host *mmc = mrq->host;
-	struct sdhci_host *host = mmc_priv(mmc);
-	struct hi6250_sdhci *priv = sdhci_pltfm_priv(sdhci_priv(host));
+	struct mmc_host *mmc = hi6250_dbg_mmc;
+	struct hi6250_sdhci *priv = hi6250_dbg_priv;
 	void (*done)(struct mmc_request *mrq) = priv->dbg_done;
 
 	dev_info(mmc_dev(mmc),
@@ -254,7 +256,9 @@ static void hi6250_request(struct mmc_host *mmc, struct mmc_request *mrq)
 		return;
 	}
 
-	if (write_ok && mrq->done && priv->dbg_logged < 40) {
+	if (write_ok && mrq->done && priv->dbg_logged < 60) {
+		hi6250_dbg_mmc = mmc;
+		hi6250_dbg_priv = priv;
 		priv->dbg_logged++;
 		priv->dbg_done = mrq->done;
 		mrq->done = hi6250_dbg_write_done;
