@@ -8,13 +8,15 @@
  * not supported and are masked out of the host caps.
  *
  * This eMMC holds the bootloader and the only recovery path, so the driver refuses every
- * command that can change the device's contents (see hi6250_cmd_blocked()). There is no
- * way to lift that at runtime.
+ * command that can change the device's contents (see hi6250_cmd_blocked()), with one
+ * compiled-in exception: plain data writes entirely inside the user-area partitions listed in
+ * hi6250_write_windows (see hi6250_write_ok()). There is no way to change that at runtime.
  */
 
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/log2.h>
+#include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
 #include <linux/mmc/mmc.h>
 #include <linux/module.h>
@@ -141,16 +143,75 @@ static bool hi6250_sbc_blocked(struct mmc_request *mrq)
 	       (mrq->cmd->opcode != MMC_READ_MULTIPLE_BLOCK && mrq->cmd->opcode != MMC_READ_SINGLE_BLOCK);
 }
 
+/*
+ * Production write windows (bach2 runs mainline as its only OS; user decision 2026-11-28): the
+ * kernel slots, so mainline can update itself, and userdata, its ext4 root. Values are this
+ * tablet's GPT as the kernel saw it (/sys/class/block/mmcblk0p{27,30,59}/{start,size}, read on
+ * the device 2026-11-28). The windows only apply to a card of exactly HI6250_CARD_SECTORS
+ * sectors (so also sector-addressed: the core sets block addressing above 2 GiB), in the user
+ * area. Erase/trim/discard, write-protect, lock, RPMB and boot-partition access and EXT_CSD
+ * writes beyond hi6250_switch_allowed stay refused, so the bootloader, xloader, BFM records,
+ * misc, nvme and every other partition cannot be written.
+ */
+#define HI6250_CARD_SECTORS	61071360U
+
+static const struct {
+	const char *name;
+	u32 start;
+	u32 nr;
+} hi6250_write_windows[] = {
+	{ "erecovery_kernel p27", 753664, 49152 },
+	{ "kernel p30", 901120, 49152 },
+	{ "userdata p59", 12320768, 48750592 },
+};
+/* userdata is the last partition: it ends exactly at the end of the card. */
+static_assert(12320768U + 48750592U == HI6250_CARD_SECTORS);
+
+static bool hi6250_write_ok(struct mmc_host *mmc, struct mmc_request *mrq)
+{
+	struct mmc_card *card = mmc->card;
+	struct mmc_command *cmd = mrq->cmd;
+	struct mmc_data *data = cmd ? cmd->data : NULL;
+	u32 i, first, nr, s, n;
+
+	if (!card || !data || mrq->sbc)
+		return false;
+	if (cmd->opcode != MMC_WRITE_BLOCK && cmd->opcode != MMC_WRITE_MULTIPLE_BLOCK)
+		return false;
+	if ((data->flags & (MMC_DATA_WRITE | MMC_DATA_READ)) != MMC_DATA_WRITE)
+		return false;
+	if (data->blksz != 512 || !data->blocks)
+		return false;
+	if (cmd->opcode == MMC_WRITE_BLOCK && data->blocks != 1)
+		return false;
+	if (card->ext_csd.sectors != HI6250_CARD_SECTORS)
+		return false;
+	if (card->ext_csd.part_config & EXT_CSD_PART_CONFIG_ACC_MASK)
+		return false;
+	if (mrq->stop && mrq->stop->opcode != MMC_STOP_TRANSMISSION)
+		return false;
+	first = cmd->arg;
+	nr = data->blocks;
+	for (i = 0; i < ARRAY_SIZE(hi6250_write_windows); i++) {
+		s = hi6250_write_windows[i].start;
+		n = hi6250_write_windows[i].nr;
+		if (first >= s && first - s < n && nr <= n - (first - s))
+			return true;
+	}
+	return false;
+}
+
 static void hi6250_request(struct mmc_host *mmc, struct mmc_request *mrq)
 {
 	struct sdhci_host *host = mmc_priv(mmc);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct hi6250_sdhci *priv = sdhci_pltfm_priv(pltfm_host);
 	struct mmc_command *bad = NULL;
+	bool write_ok = hi6250_write_ok(mmc, mrq);
 
 	if (hi6250_cmd_blocked(mrq->sbc) || hi6250_sbc_blocked(mrq))
 		bad = mrq->sbc;
-	else if (hi6250_cmd_blocked(mrq->cmd) || mrq->cmd->opcode == MMC_SET_BLOCK_COUNT)
+	else if (!write_ok && (hi6250_cmd_blocked(mrq->cmd) || mrq->cmd->opcode == MMC_SET_BLOCK_COUNT))
 		bad = mrq->cmd;
 	else if (mrq->stop && mrq->stop->opcode != MMC_STOP_TRANSMISSION)
 		bad = mrq->stop;
@@ -368,6 +429,7 @@ static const struct sdhci_pltfm_data hi6250_sdhci_pdata = {
 
 static int hi6250_sdhci_probe(struct platform_device *pdev)
 {
+	unsigned int i;
 	struct device *dev = &pdev->dev;
 	struct reset_control *rst;
 	struct sdhci_pltfm_host *pltfm_host;
@@ -454,6 +516,10 @@ static int hi6250_sdhci_probe(struct platform_device *pdev)
 	}
 	dev_info(dev, "read-only eMMC host: caps 0x%08x caps2 0x%08x f_max %u\n",
 		 host->mmc->caps, host->mmc->caps2, host->mmc->f_max);
+	for (i = 0; i < ARRAY_SIZE(hi6250_write_windows); i++)
+		dev_info(dev, "write window: %s LBA %u..%u (card %u sectors, user area only)\n",
+			 hi6250_write_windows[i].name, hi6250_write_windows[i].start,
+			 hi6250_write_windows[i].start + hi6250_write_windows[i].nr - 1, HI6250_CARD_SECTORS);
 	return 0;
 }
 
