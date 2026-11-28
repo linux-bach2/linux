@@ -324,8 +324,8 @@
 	};
 
 	chosen {
-		/* 0081: userspace governor = no cpufreq requests to LPM3 unless scaling_setspeed is written */
-		bootargs = "console=tty0 loglevel=8 ignore_loglevel printk.time=1 cpufreq.default_governor=userspace";
+		/* Match the proven production cmdline now that CMDLINE_FORCE is off (keeps schedutil and quiet tty0). */
+		bootargs = "earlycon=tty0 console=tty0";
 
 		#address-cells = <2>;
 		#size-cells = <2>;
