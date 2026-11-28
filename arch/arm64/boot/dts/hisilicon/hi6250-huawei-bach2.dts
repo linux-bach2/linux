@@ -325,7 +325,7 @@
 
 	chosen {
 		/* Match the proven production cmdline now that CMDLINE_FORCE is off (keeps schedutil and quiet tty0). */
-		bootargs = "earlycon=tty0 console=tty0";
+		bootargs = "earlycon=tty0 console=tty0 log_buf_len=1M";
 
 		#address-cells = <2>;
 		#size-cells = <2>;
