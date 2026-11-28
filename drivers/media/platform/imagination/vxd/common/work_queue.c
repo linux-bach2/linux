@@ -39,8 +39,14 @@ void init_work(void **work_args, void *work_fn, uint8_t hwa_id)
 	//create a link
 	struct node *link = kmalloc(sizeof(*link), GFP_KERNEL);
 
-	*work = kzalloc(sizeof(*work), GFP_KERNEL);
+	if (!link) {
+		pr_err("Memory allocation failed for work_queue link\n");
+		return;
+	}
+
+	*work = kzalloc(sizeof(**work), GFP_KERNEL);
 	if (!(*work)) {
+		kfree(link);
 		pr_err("Memory allocation failed for work_queue\n");
 		return;
 	}
@@ -62,8 +68,14 @@ void init_delayed_work(void **work_args, void *work_fn, uint8_t hwa_id)
 	//create a link
 	struct node *link = kmalloc(sizeof(*link), GFP_KERNEL);
 
-	*work = kzalloc(sizeof(*work), GFP_KERNEL);
+	if (!link) {
+		pr_err("Memory allocation failed for delayed_work_queue link\n");
+		return;
+	}
+
+	*work = kzalloc(sizeof(**work), GFP_KERNEL);
 	if (!(*work)) {
+		kfree(link);
 		pr_err("Memory allocation failed for delayed_work_queue\n");
 		return;
 	}
