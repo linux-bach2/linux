@@ -163,6 +163,12 @@ static const struct {
 	{ "erecovery_kernel p27", 753664, 49152 },
 	{ "kernel p30", 901120, 49152 },
 	{ "userdata p59", 12320768, 48750592 },
+	/*
+	 * RESCUE (2026-11-28): misc (p20, start 507904 from sysfs) sector 0 only, so a booted kernel can write
+	 * the stock bootloader control block back over Huawei BFM's "boot-erecovery" command (the only
+	 * 14 bytes that differ from this tablet's misc backup). Not for production builds.
+	 */
+	{ "misc p20 sector 0 (BCB command)", 507904, 1 },
 };
 /* userdata is the last partition: it ends exactly at the end of the card. */
 static_assert(12320768U + 48750592U == HI6250_CARD_SECTORS);
