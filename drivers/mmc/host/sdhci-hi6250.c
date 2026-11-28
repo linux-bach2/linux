@@ -169,6 +169,9 @@ static const struct {
 	 * 14 bytes that differ from this tablet's misc backup). Not for production builds.
 	 */
 	{ "misc p20 sector 0 (BCB command)", 507904, 1 },
+	/* RESCUE 2: Huawei BFM/BFR records, restored sector by sector from this tablet's own backups */
+	{ "bootfail_info p48", 1998848, 4096 },
+	{ "rrecord p49", 2002944, 32768 },
 };
 /* userdata is the last partition: it ends exactly at the end of the card. */
 static_assert(12320768U + 48750592U == HI6250_CARD_SECTORS);
