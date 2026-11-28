@@ -212,6 +212,16 @@ static bool hi6250_write_ok(struct mmc_host *mmc, struct mmc_request *mrq)
 
 static void hi6250_request(struct mmc_host *mmc, struct mmc_request *mrq)
 {
+	static bool regs_logged;
+
+	if (!regs_logged && mmc->ios.clock >= 25000000) {
+		struct sdhci_host *h = mmc_priv(mmc);
+
+		regs_logged = true;
+		dev_info(mmc_dev(mmc), "at %u Hz: Host ctl 0x%02x Host ctl2 0x%04x PHY_CTRL1 0x%08x PHY_CTRL2 0x%08x PHY_CTRL3 0x%08x\n",
+			 mmc->ios.clock, sdhci_readb(h, SDHCI_HOST_CONTROL), sdhci_readw(h, SDHCI_HOST_CONTROL2),
+			 sdhci_readl(h, HI6250_PHY_CTRL1), sdhci_readl(h, HI6250_PHY_CTRL2), sdhci_readl(h, HI6250_PHY_CTRL3));
+	}
 	struct sdhci_host *host = mmc_priv(mmc);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct hi6250_sdhci *priv = sdhci_pltfm_priv(pltfm_host);
@@ -429,7 +439,8 @@ static const struct sdhci_ops hi6250_sdhci_ops = {
 
 static const struct sdhci_pltfm_data hi6250_sdhci_pdata = {
 	.ops = &hi6250_sdhci_ops,
-	.quirks = SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN | SDHCI_QUIRK_BROKEN_TIMEOUT_VAL,
+	.quirks = SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN | SDHCI_QUIRK_BROKEN_TIMEOUT_VAL |
+		  SDHCI_QUIRK_NO_HISPD_BIT,	/* vendor sdhci.c: HISPD=0 for MMC_HS; HISPD=1 broke writes (CRC) */
 	.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN | SDHCI_QUIRK2_BROKEN_HS200 |
 		   SDHCI_QUIRK2_BROKEN_DDR50 | SDHCI_QUIRK2_BROKEN_64_BIT_DMA |
 		   SDHCI_QUIRK2_HOST_NO_CMD23 |	/* no CMD23: the core then registers no RPMB part */
