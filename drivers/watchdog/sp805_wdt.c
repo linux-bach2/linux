@@ -297,6 +297,15 @@ sp805_wdt_probe(struct amba_device *adev, const struct amba_id *id)
 	if (wdt_is_running(&wdt->wdd)) {
 		wdt_enable(&wdt->wdd);
 		set_bit(WDOG_HW_RUNNING, &wdt->wdd.status);
+	} else if (device_property_read_bool(&adev->dev, "bach2,arm-at-probe")) {
+		/*
+		 * bach2: the bootloader leaves the SP805 stopped and a kexec stops it (stop_on_reboot), so
+		 * nothing would reset a hang before the userspace feeder. Start it here; the core keeps it
+		 * fed (WDOG_HW_RUNNING) until userspace opens it. Poweroff still stops it (stop_on_reboot).
+		 */
+		wdt_enable(&wdt->wdd);
+		set_bit(WDOG_HW_RUNNING, &wdt->wdd.status);
+		dev_info(&adev->dev, "armed at probe (bach2,arm-at-probe), timeout %u s\n", wdt->wdd.timeout);
 	}
 
 	watchdog_stop_on_reboot(&wdt->wdd);

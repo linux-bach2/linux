@@ -692,6 +692,9 @@
 &watchdog0 {
 	clocks = <&crg_ctrl HI6250_CRG_CLK_WD0_MUX>, <&crg_ctrl HI6250_PCLK_WD0_HIGH>;
 	clock-names = "wdog_clk", "apb_pclk";
+	/* Production: start at probe (60 s, the counter runs at 32764 Hz: CRG 0x140 = 0x000c0000, read
+	 * 2026-11-28), so a hang before the userspace feeder resets into p30 instead of stranding the tablet. */
+	bach2,arm-at-probe;
 };
 
 &usb_phy {
