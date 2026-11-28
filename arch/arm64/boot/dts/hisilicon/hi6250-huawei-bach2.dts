@@ -729,9 +729,29 @@
 	};
 };
 
-/* Bring-up: every plain reboot or panic goes to fastboot (vendor reason 0x01), so the host can restore the stock kernel. */
+/*
+ * Production (2026-11-28): mainline is the only OS, in both kernel slots (p30 and p27), so a
+ * plain reboot or a panic boots normally (driver default reason, coldboot) instead of stopping in
+ * fastboot. powerhold-gpios is dropped: fw_devlink made this driver wait for the gpio25
+ * controller (device_initcall), so the 2026-11-28 panic in hi6555v100_bat_probe at 0.478 s found
+ * no restart handler but PSCI (a no-op here) and halted. Without it the handler registers at
+ * subsys_initcall. Restart does not need the GPIO (see hi6250-reboot.c).
+ */
 &reboot {
-	hisilicon,default-reboot-reason = <0x01>;
+	/delete-property/ hisilicon,powerhold-gpios;
+};
+
+/*
+ * Cluster power-down idle (PSCI 0x1010000) off, CPU-level idle kept. The 2026-11-28 panic read a
+ * slab freelist pointer that was this kernel's own code with one bit cleared, i.e. stale memory;
+ * lost dirty lines on a cluster power-down are the leading suspect [inferred, not proven].
+ */
+&CLUSTER_SLEEP_0 {
+	status = "disabled";
+};
+
+&CLUSTER_SLEEP_1 {
+	status = "disabled";
 };
 
 /*
