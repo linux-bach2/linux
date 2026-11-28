@@ -280,6 +280,7 @@ u64 cpu_logical_map(unsigned int cpu)
 
 #include <linux/io.h>
 #include <asm/early_ioremap.h>
+
 #define BACH2_FB	0x5d000000UL
 #define BACH2_STRIP	230400UL
 static const u32 bach2_col[16] = { 0xffffffff, 0xffff0000, 0xffffff00, 0xff00ff00,
@@ -333,6 +334,7 @@ void bach2_crumb(int n)
 
 void __init __no_sanitize_address setup_arch(char **cmdline_p)
 {
+	bach2_flush_dcache_all();	/* stale dirty lines from the bootloader/previous kernel */
 	setup_initial_init_mm(_text, _etext, _edata, _end);
 
 	*cmdline_p = boot_command_line;

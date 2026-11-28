@@ -861,12 +861,50 @@ void arch_irq_work_raise(void)
 }
 #endif
 
+
+/*
+ * bach2: clean and invalidate every data/unified cache level up to the Level of Coherency by set/way on this CPU.
+ * The hi6250 warm reset does not invalidate the second cluster's L2, and dirty lines of the previous kernel were
+ * evicted over the next kernel's memory (slab freelist corruption at ~0.48 s after warm resets, 2026-11-28).
+ * Only used while stopping/resetting; other CPUs are parked or about to be.
+ */
+void bach2_flush_dcache_all(void)
+{
+	u64 clidr, ccsidr, val;
+	unsigned int level, loc, ctype, lsh, wsh, ways, sets, s, w;
+
+	dmb(sy);
+	clidr = read_sysreg(clidr_el1);
+	loc = (clidr >> 24) & 7;
+	for (level = 0; level < loc; level++) {
+		ctype = (clidr >> (level * 3)) & 7;
+		if (ctype < 2)		/* no data or unified cache at this level */
+			continue;
+		write_sysreg(level << 1, csselr_el1);
+		isb();
+		ccsidr = read_sysreg(ccsidr_el1);
+		lsh = (ccsidr & 7) + 4;
+		ways = (ccsidr >> 3) & 0x3ff;
+		sets = (ccsidr >> 13) & 0x7fff;
+		wsh = ways ? __builtin_clz(ways) : 0;
+		for (s = 0; s <= sets; s++)
+			for (w = 0; w <= ways; w++) {
+				val = (level << 1) | ((u64)w << wsh) | ((u64)s << lsh);
+				asm volatile("dc cisw, %0" : : "r" (val) : "memory");
+			}
+	}
+	write_sysreg(0, csselr_el1);
+	dsb(sy);
+	isb();
+}
+
 static void __noreturn local_cpu_stop(unsigned int cpu)
 {
 	set_cpu_online(cpu, false);
 
 	local_daif_mask();
 	sdei_mask_local_cpu();
+	bach2_flush_dcache_all();
 	cpu_park_loop();
 }
 

@@ -16,6 +16,8 @@
 #include <linux/gpio/consumer.h>
 #include <linux/mfd/syscon.h>
 
+#include <asm/cacheflush.h>
+
 struct hi6250_reboot {
 	u32 default_reason;
 	struct device *dev;
@@ -57,6 +59,9 @@ static void hi6250_reset_with_reason(
 	/* do some goop with gpio25 */
 	gpiod_set_value_cansleep(hi6250_reboot->powerhold_gpio, 1);
 	mdelay(1000);
+
+	/* bach2: no dirty line of this kernel may survive the warm reset (see bach2_flush_dcache_all) */
+	bach2_flush_dcache_all();
 
 	/* setup reboot reason in pmuctrl */
 	regmap_update_bits(hi6250_reboot->pmuctrl,

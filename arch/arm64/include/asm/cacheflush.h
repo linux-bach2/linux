@@ -141,4 +141,7 @@ static __always_inline void icache_inval_all_pou(void)
 
 #include <asm-generic/cacheflush.h>
 
+/* bach2: clean+invalidate all data cache levels on this CPU by set/way (arch/arm64/kernel/smp.c) */
+void bach2_flush_dcache_all(void);
+
 #endif /* __ASM_CACHEFLUSH_H */
