@@ -446,6 +446,8 @@ void __init smp_cpus_done(unsigned int max_cpus)
 
 void __init smp_prepare_boot_cpu(void)
 {
+	/* bach2: drop stale dirty lines (bootloader payload, previous kernel) before the page allocator exists */
+	bach2_flush_dcache_all();
 	/*
 	 * The runtime per-cpu areas have been allocated by
 	 * setup_per_cpu_areas(), and CPU0's boot time per-cpu area will be

@@ -130,6 +130,8 @@ void machine_restart(char *cmd)
 	/* Disable interrupts first */
 	local_irq_disable();
 	smp_send_stop();
+	/* bach2: no dirty line of this kernel may survive the warm reset (stopped CPUs flushed in local_cpu_stop) */
+	bach2_flush_dcache_all();
 
 	/*
 	 * UpdateCapsule() depends on the system being reset via
