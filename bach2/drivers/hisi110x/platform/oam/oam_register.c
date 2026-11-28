@@ -2149,10 +2149,10 @@ oal_void oam_reg_exit(oal_void)
     oam_netlink_ops_unregister(OAM_NL_CMD_REG);
 
     /* 删除工作队列 */
-    oal_destroy_workqueue(g_st_oam_reg_mng.st_wq.pst_wq);
-    if(OAL_PTR_NULL != g_st_oam_reg_mng.st_wq.pst_wq)
+    if (OAL_PTR_NULL != g_st_oam_reg_mng.st_wq.pst_wq)
     {
         oal_destroy_workqueue(g_st_oam_reg_mng.st_wq.pst_wq);
+        g_st_oam_reg_mng.st_wq.pst_wq = OAL_PTR_NULL;
     }
     
     oal_netbuf_queue_purge(&g_st_oam_reg_mng.st_wq.st_netbuf_head);

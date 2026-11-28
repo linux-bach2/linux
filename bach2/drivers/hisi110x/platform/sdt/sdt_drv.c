@@ -553,6 +553,7 @@ oal_void  sdt_drv_main_exit(oal_void)
     if(OAL_PTR_NULL != g_st_sdt_drv_mng_entry.oam_rx_workqueue)
     {
         oal_destroy_workqueue(g_st_sdt_drv_mng_entry.oam_rx_workqueue);
+        g_st_sdt_drv_mng_entry.oam_rx_workqueue = OAL_PTR_NULL;
     }
     oal_netbuf_queue_purge(&g_st_sdt_drv_mng_entry.rx_wifi_dbg_seq);
 

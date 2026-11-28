@@ -130,6 +130,7 @@ oal_void oal_softwdt_exit(oal_void)
     if(NULL != g_hisi_softwdt.wdt_wq)
     {
         oal_destroy_workqueue(g_hisi_softwdt.wdt_wq);
+        g_hisi_softwdt.wdt_wq = NULL;
     }
 }
 oal_module_symbol(oal_softwdt_exit);
