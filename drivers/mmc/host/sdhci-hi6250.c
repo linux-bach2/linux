@@ -59,6 +59,8 @@ struct hi6250_sdhci {
 	u32 host_drv;
 	unsigned char old_bus_mode;
 	unsigned int stray_data_end;
+	void (*dbg_done)(struct mmc_request *mrq);	/* DEBUG */
+	unsigned int dbg_logged;			/* DEBUG */
 	void (*sdhci_request)(struct mmc_host *mmc, struct mmc_request *mrq);
 	void (*sdhci_set_ios)(struct mmc_host *mmc, struct mmc_ios *ios);
 };
@@ -115,6 +117,8 @@ static bool hi6250_cmd_blocked(struct mmc_command *cmd)
 	case MMC_SET_BLOCKLEN:		/* 16 */
 	case MMC_READ_SINGLE_BLOCK:	/* 17 */
 	case MMC_READ_MULTIPLE_BLOCK:	/* 18 */
+	case MMC_SEND_WRITE_PROT:	/* 30, DEBUG: write-protect status (data read) */
+	case 31:			/* 31 SEND_WRITE_PROT_TYPE, DEBUG: write-protect type (data read) */
 		return false;
 	case MMC_SET_BLOCK_COUNT:	/* 23: only as the sbc of a read, see hi6250_sbc_blocked() */
 		return false;
@@ -201,6 +205,23 @@ static bool hi6250_write_ok(struct mmc_host *mmc, struct mmc_request *mrq)
 	return false;
 }
 
+/* DEBUG (prod-ml-dbg): log how each admitted write completes: command, R1, data and stop results. */
+static void hi6250_dbg_write_done(struct mmc_request *mrq)
+{
+	struct mmc_host *mmc = mrq->host;
+	struct sdhci_host *host = mmc_priv(mmc);
+	struct hi6250_sdhci *priv = sdhci_pltfm_priv(sdhci_priv(host));
+	void (*done)(struct mmc_request *mrq) = priv->dbg_done;
+
+	dev_info(mmc_dev(mmc),
+		 "DBG write CMD%u arg=%u blocks=%u: cmd err=%d resp=%08x data err=%d xfered=%u stop=%s err=%d resp=%08x\n",
+		 mrq->cmd->opcode, mrq->cmd->arg, mrq->data ? mrq->data->blocks : 0, mrq->cmd->error,
+		 mrq->cmd->resp[0], mrq->data ? mrq->data->error : 0, mrq->data ? mrq->data->bytes_xfered : 0,
+		 mrq->stop ? "CMD12" : "none", mrq->stop ? mrq->stop->error : 0, mrq->stop ? mrq->stop->resp[0] : 0);
+	mrq->done = done;
+	done(mrq);
+}
+
 static void hi6250_request(struct mmc_host *mmc, struct mmc_request *mrq)
 {
 	struct sdhci_host *host = mmc_priv(mmc);
@@ -231,6 +252,12 @@ static void hi6250_request(struct mmc_host *mmc, struct mmc_request *mrq)
 		memset(mrq->cmd->resp, 0, sizeof(mrq->cmd->resp));
 		mmc_request_done(mmc, mrq);
 		return;
+	}
+
+	if (write_ok && mrq->done && priv->dbg_logged < 40) {
+		priv->dbg_logged++;
+		priv->dbg_done = mrq->done;
+		mrq->done = hi6250_dbg_write_done;
 	}
 
 	if (bad) {
